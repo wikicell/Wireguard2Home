@@ -1,21 +1,14 @@
 # Wireguard2Home
 
-Ein interaktives WireGuard-Toolkit für CGNAT-Bypass, Heimnetz-Tunneling und Selfhosting-Infrastrukturen.
+> **Self-contained WireGuard VPN stack that bypasses CGNAT.** A lightweight VPS acts as hub; a Gateway-Host (Raspberry Pi or any Linux machine) bridges your entire home LAN through the encrypted tunnel — reachable from any device, anywhere in the world.
+>
+> Features a single-script bootstrap installer with all sub-scripts embedded (no GitHub dependency at runtime), a live traffic dashboard with per-client RX/TX stats, a full client manager with QR-code export, automated offsite backups to the Gateway-Host, and a one-command restore. Supports full-tunnel, split-tunnel, and home-DNS filter modes. Runs on Debian, Ubuntu, Fedora, Arch, openSUSE and Raspberry Pi OS.
 
-Das Projekt ist Teil der Gate2Home Infrastruktur und bündelt in einer zentralen CLI:
+---
 
-* automatische Client-Erstellung
-* QR-Code Generierung
-* PNG Export
-* DNS-Auswahl
-* Split-/Full-Tunnel Konfiguration
-* Client-Verwaltung
-* Client-Entfernung
-* automatische IP-Vergabe
-* Heimnetz-Routing
-* Live-Dashboard
-* Backup
-* Restore
+Eigenständiger WireGuard-VPN-Stack zum Überbrücken von CGNAT. Ein leichtgewichtiger VPS dient als Knotenpunkt; ein Gateway-Host (Raspberry Pi oder jeder andere Linux-Rechner) verbindet das gesamte Heimnetz verschlüsselt mit dem Tunnel — erreichbar von jedem Gerät, überall auf der Welt.
+
+Enthält einen vollständig eigenständigen Bootstrap-Installer mit eingebetteten Sub-Scripts (kein GitHub-Zugriff zur Laufzeit nötig), ein Live-Traffic-Dashboard mit RX/TX-Statistiken pro Client, einen vollständigen Client-Manager mit QR-Code-Export, automatisierte Offsite-Backups zum Gateway-Host sowie eine Ein-Befehl-Wiederherstellung. Unterstützt Full-Tunnel, Split-Tunnel und Heimnetz-DNS-Filter. Läuft auf Debian, Ubuntu, Fedora, Arch, openSUSE und Raspberry Pi OS.
 
 ---
 
