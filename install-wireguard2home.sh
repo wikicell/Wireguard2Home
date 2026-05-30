@@ -43,6 +43,7 @@ DNS_HOME_LABEL="Home DNS"
 DNS_HOME_VALUE="192.168.50.53"
 DNS_ROUTER_LABEL="Router DNS"
 DNS_ROUTER_VALUE="192.168.50.1"
+UPDATE_MODE=0
 
 usage() {
   cat <<EOF
@@ -79,9 +80,18 @@ Infrastruktur-Konfiguration (interaktiv abgefragt, wenn nicht angegeben):
 
   --help                        Diese Hilfe anzeigen
 
+Aktualisierung bereits installierter Hosts:
+  --update                      Aktualisiert nur die Runtime-Skripte
+                                (Wireguard2Home.sh etc.), ohne WireGuard-
+                                Konfiguration oder Schluessel zu veraendern.
+                                Mit --role gateway --vps-host USER@HOST wird
+                                zusaetzlich der VPS per SSH aktualisiert.
+
 Beispiele:
   $0 --role vps
   $0 --role gateway --vps-host root@YOUR_VPS_HOST --vps-ssh-key /root/.ssh/id_rsa
+  $0 --update
+  $0 --update --role gateway --vps-host root@YOUR_VPS_HOST
 EOF
 }
 
@@ -319,6 +329,8 @@ parse_args() {
         DNS_ROUTER_LABEL="$2"; shift 2 ;;
       --dns-router-value)
         DNS_ROUTER_VALUE="$2"; shift 2 ;;
+      --update)
+        UPDATE_MODE=1; shift ;;
       --help|-h)
         usage; exit 0 ;;
       *)
@@ -6544,12 +6556,82 @@ install_gateway_local_and_vps_remote() {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Update mode: refresh deployed runtime scripts (keeps config & keys)
+# ──────────────────────────────────────────────────────────────────────────────
+
+UPDATE_SCRIPT_SET="runtime-paths.sh Wireguard2Home.sh wireguard-dashboard.sh create-wg-client.sh backup-wireguard2home.sh restore-wireguard2home.sh"
+
+run_update_local() {
+  log "Aktualisiere Runtime-Skripte in ${SERVICE_HOME} ..."
+  mkdir -p "$SERVICE_HOME"
+  local name
+  for name in $UPDATE_SCRIPT_SET; do
+    extract_script "$name" "${SERVICE_HOME}/${name}"
+  done
+  log "Lokale Skripte aktualisiert. WireGuard-Konfiguration und Schluessel bleiben unveraendert."
+}
+
+run_update_remote_vps() {
+  ensure_ssh_client
+  ssh_mux_start
+  trap 'ssh_mux_stop' EXIT
+  echo ""
+  echo "Hinweis: Falls noch kein SSH-Key auf dem VPS liegt, wirst du einmal nach dem Passwort gefragt."
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local ssh_cmd scp_cmd name
+  ssh_cmd="$(build_ssh_cmd)"
+  scp_cmd="$(build_scp_cmd)"
+
+  for name in $UPDATE_SCRIPT_SET; do
+    extract_script "$name" "${tmp_dir}/${name}"
+  done
+
+  log "Lade aktualisierte Skripte auf den VPS (${REMOTE_SERVICE_HOME}) ..."
+  $ssh_cmd "$VPS_HOST" "mkdir -p $(shell_escape "$REMOTE_SERVICE_HOME")"
+  for name in $UPDATE_SCRIPT_SET; do
+    $scp_cmd "${tmp_dir}/${name}" "${VPS_HOST}:${REMOTE_SERVICE_HOME}/${name}"
+  done
+  $ssh_cmd "$VPS_HOST" "chmod 700 $(shell_escape "$REMOTE_SERVICE_HOME")/Wireguard2Home.sh 2>/dev/null || true"
+
+  rm -rf "$tmp_dir"
+  ssh_mux_stop
+  trap - EXIT
+  log "VPS-Skripte aktualisiert."
+}
+
+run_update() {
+  if [ "$ROLE" = "auto" ]; then
+    ROLE="$(detect_role)"
+  fi
+
+  run_update_local
+
+  if [ "$ROLE" = "gateway" ] && [ -n "$VPS_HOST" ]; then
+    run_update_remote_vps
+  fi
+
+  echo ""
+  echo "Update abgeschlossen."
+  if [ "$ROLE" = "gateway" ] && [ -z "$VPS_HOST" ]; then
+    echo "Hinweis: Fuer ein VPS-Update zusaetzlich --vps-host USER@HOST angeben."
+  fi
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────────────────────────────────────
 
 main() {
   parse_args "$@"
   require_root
+
+  if [ "$UPDATE_MODE" -eq 1 ]; then
+    run_update
+    exit 0
+  fi
+
   ask_role_if_needed
   ask_gateway_connection_if_needed
   ask_infra_config_if_needed
