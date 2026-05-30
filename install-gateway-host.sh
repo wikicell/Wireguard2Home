@@ -368,6 +368,48 @@ EOF
   fi
 }
 
+update_server_peer_in_conf() {
+  # Aktualisiert den VPS-[Peer]-Block in einer bereits vorhandenen wg0.conf
+  # idempotent. Wichtig nach VPS-Neuaufsetzung: dort wird ein neuer Server-Key
+  # erzeugt, und eine alte Gateway-Config wuerde sonst auf den falschen Key
+  # zeigen (Handshake schlaegt fehl, Tunnel kommt nicht zustande).
+  if [ -z "$SERVER_PUBLIC_KEY" ]; then
+    log "Kein Server-Public-Key uebergeben – VPS-Peer wird nicht angepasst."
+    return 0
+  fi
+
+  local tmp_conf
+  tmp_conf="$(mktemp)"
+
+  # Alle bestehenden [Peer]-Bloecke entfernen (Gateway hat genau einen Peer: den VPS)
+  awk '
+    BEGIN { RS=""; FS="\n" }
+    {
+      if ($0 ~ /\[Peer\]/) { next }
+      printf "%s%s", (printed++ ? "\n\n" : ""), $0
+    }
+    END { if (printed) print "" }
+  ' "$WG_CONF" > "$tmp_conf"
+
+  # Frischen VPS-Peer anhaengen
+  {
+    echo ""
+    echo "[Peer]"
+    echo "PublicKey = ${SERVER_PUBLIC_KEY}"
+    echo "Endpoint = ${SERVER_ENDPOINT}"
+    echo "AllowedIPs = ${WG_NETWORK_CIDR}"
+    echo "PersistentKeepalive = 25"
+  } >> "$tmp_conf"
+
+  install -m 600 "$tmp_conf" "$WG_CONF"
+  rm -f "$tmp_conf"
+  log "VPS-Peer in ${WG_CONF} aktualisiert (PublicKey/Endpoint)."
+
+  if [ "$HAS_SYSTEMCTL" -eq 1 ]; then
+    systemctl restart "wg-quick@${WG_IFACE}" >/dev/null 2>&1 || true
+  fi
+}
+
 write_raspberry_template_if_missing() {
   local private_key="${WG_DIR}/raspberry_private.key"
   local nat_lines=""
@@ -376,7 +418,8 @@ write_raspberry_template_if_missing() {
 
   if [ -f "$WG_CONF" ]; then
     chmod 600 "$WG_CONF"
-    log "${WG_CONF} existiert bereits. Bestehende Konfiguration bleibt erhalten."
+    log "${WG_CONF} existiert bereits. Aktualisiere ggf. den VPS-Peer (Key/Endpoint)."
+    update_server_peer_in_conf
     return
   fi
 
