@@ -81,7 +81,7 @@ Infrastruktur-Konfiguration (interaktiv abgefragt, wenn nicht angegeben):
 
 Beispiele:
   $0 --role vps
-  $0 --role gateway --vps-host root@YOUR_VPS_HOST --vps-ssh-key ~/.ssh/id_rsa
+  $0 --role gateway --vps-host root@YOUR_VPS_HOST --vps-ssh-key /root/.ssh/id_rsa
 EOF
 }
 
@@ -162,11 +162,24 @@ ask_gateway_connection_if_needed() {
   fi
 
   echo ""
-  echo "Optional: Pfad zu einem SSH-Key fuer den VPS-Zugriff."
-  echo "Leer lassen, wenn der Standard-Key oder SSH-Agent verwendet werden soll."
-  read -r -p "VPS SSH-Key [Standard/Agent]: " VPS_SSH_KEY_INPUT
+  echo "Optional: Pfad zu einer SSH-Key-Datei fuer den VPS-Zugriff,"
+  echo "z. B. /root/.ssh/id_rsa oder ~/.ssh/id_ed25519."
+  echo "Einfach leer lassen und Enter druecken, wenn der VPS nur per"
+  echo "Passwort erreichbar ist oder ein SSH-Agent/Standard-Key genutzt wird"
+  echo "(dann wird nach dem Passwort gefragt)."
+  read -r -p "Pfad zur SSH-Key-Datei (leer = Passwort/Agent): " VPS_SSH_KEY_INPUT
   if [ -n "${VPS_SSH_KEY_INPUT:-}" ]; then
-    VPS_SSH_KEY="$VPS_SSH_KEY_INPUT"
+    # Tilde-Expansion fuer Eingaben wie ~/.ssh/id_rsa
+    case "$VPS_SSH_KEY_INPUT" in
+      "~/"*) VPS_SSH_KEY_INPUT="${HOME}/${VPS_SSH_KEY_INPUT#"~/"}" ;;
+      "~")   VPS_SSH_KEY_INPUT="${HOME}" ;;
+    esac
+    if [ ! -f "$VPS_SSH_KEY_INPUT" ]; then
+      echo "Warnung: '${VPS_SSH_KEY_INPUT}' ist keine vorhandene Datei."
+      echo "Es wird stattdessen Passwort-/Agent-Authentifizierung versucht."
+    else
+      VPS_SSH_KEY="$VPS_SSH_KEY_INPUT"
+    fi
   fi
 }
 
@@ -6079,22 +6092,62 @@ ensure_local_script() {
 
 # ──────────────────────────────────────────────────────────────────────────────
 # SSH / SCP helpers
+#
+# Hinweis: BatchMode wird bewusst NICHT gesetzt, damit auf einem frischen VPS
+# (noch kein SSH-Key hinterlegt) die interaktive Passwort-Abfrage funktioniert.
+# Per ControlMaster/ControlPath wird die Verbindung gemultiplext, sodass das
+# Passwort nur einmal eingegeben werden muss, auch wenn mehrere SSH/SCP-Aufrufe
+# erfolgen.
 # ──────────────────────────────────────────────────────────────────────────────
 
-build_ssh_cmd() {
-  if [ -n "$VPS_SSH_KEY" ]; then
-    printf 'ssh -i %q -o BatchMode=yes -o StrictHostKeyChecking=accept-new' "$VPS_SSH_KEY"
-  else
-    printf 'ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new'
+SSH_CONTROL_PATH=""
+
+ssh_mux_start() {
+  if [ -n "$SSH_CONTROL_PATH" ]; then
+    return
   fi
+  local mux_dir
+  mux_dir="$(mktemp -d "${TMPDIR:-/tmp}/w2h-ssh.XXXXXX")"
+  SSH_CONTROL_PATH="${mux_dir}/cm"
+}
+
+ssh_mux_stop() {
+  if [ -z "$SSH_CONTROL_PATH" ]; then
+    return
+  fi
+  local ssh_key_opt=()
+  if [ -n "$VPS_SSH_KEY" ]; then
+    ssh_key_opt=(-i "$VPS_SSH_KEY")
+  fi
+  if [ -n "${VPS_HOST:-}" ]; then
+    ssh "${ssh_key_opt[@]}" -o ControlPath="$SSH_CONTROL_PATH" -O exit "$VPS_HOST" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$(dirname "$SSH_CONTROL_PATH")" 2>/dev/null || true
+  SSH_CONTROL_PATH=""
+}
+
+build_ssh_cmd() {
+  local out='ssh'
+  if [ -n "$VPS_SSH_KEY" ]; then
+    out+="$(printf ' -i %q' "$VPS_SSH_KEY")"
+  fi
+  out+=' -o StrictHostKeyChecking=accept-new'
+  if [ -n "$SSH_CONTROL_PATH" ]; then
+    out+="$(printf ' -o ControlMaster=auto -o ControlPath=%q -o ControlPersist=60' "$SSH_CONTROL_PATH")"
+  fi
+  printf '%s' "$out"
 }
 
 build_scp_cmd() {
+  local out='scp'
   if [ -n "$VPS_SSH_KEY" ]; then
-    printf 'scp -i %q -o BatchMode=yes -o StrictHostKeyChecking=accept-new' "$VPS_SSH_KEY"
-  else
-    printf 'scp -o BatchMode=yes -o StrictHostKeyChecking=accept-new'
+    out+="$(printf ' -i %q' "$VPS_SSH_KEY")"
   fi
+  out+=' -o StrictHostKeyChecking=accept-new'
+  if [ -n "$SSH_CONTROL_PATH" ]; then
+    out+="$(printf ' -o ControlMaster=auto -o ControlPath=%q -o ControlPersist=60' "$SSH_CONTROL_PATH")"
+  fi
+  printf '%s' "$out"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -6259,6 +6312,14 @@ install_gateway_local_and_vps_remote() {
   local gateway_installer
   gateway_installer="$(ensure_local_script "install-gateway-host.sh")"
 
+  # Verbindung multiplexen: Passwort (falls noch kein Key auf dem VPS liegt)
+  # muss nur einmal eingegeben werden und gilt fuer alle folgenden SSH/SCP-Aufrufe.
+  ssh_mux_start
+  trap 'ssh_mux_stop' EXIT
+  echo ""
+  echo "Hinweis: Falls der VPS noch keinen SSH-Key kennt, wirst du jetzt einmal"
+  echo "nach dem VPS-Passwort gefragt."
+
   upload_scripts_to_vps
   run_vps_installer_remote
 
@@ -6278,6 +6339,9 @@ install_gateway_local_and_vps_remote() {
     --server-endpoint "${VPS_ENDPOINT_HOST}:${WG_LISTEN_PORT}" \
     --lan-subnet "$LAN_SUBNET" \
     "${RASPBERRY_INSTALL_ARGS[@]}"
+
+  ssh_mux_stop
+  trap - EXIT
 
   echo ""
   echo "Der VPS wurde remote vorbereitet und der Gateway-Host lokal installiert."
