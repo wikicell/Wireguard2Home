@@ -453,8 +453,12 @@ sudo ./install-vps.sh --with-ufw-fail2ban --with-docker
 * `--dns-home-value IPS` — DNS-Wert für Heim-DNS-Preset
 * `--dns-router-label TEXT` — Anzeigename für zweites DNS-Preset
 * `--dns-router-value IPS` — DNS-Wert für zweites Preset
-* `--with-ufw-fail2ban` — installiert zusätzlich ufw und fail2ban
+* `--with-ufw-fail2ban` — installiert zusätzlich ufw und fail2ban (Host)
 * `--with-docker` — installiert Docker und Compose-Plugin
+* `--with-reverse-proxy` — Reverse-Proxy-Stack (Nginx Proxy Manager); impliziert `--with-docker`
+* `--with-monitoring` — Monitoring-Stack (Uptime Kuma, Watchtower, CrowdSec); impliziert `--with-docker`
+* `--with-crowdsec-bouncer` — aktiviert zusätzlich den CrowdSec Firewall-Bouncer (Standard: aus)
+* `--pushover-token` / `--pushover-user` — Pushover-Zugang für Watchtower-Benachrichtigungen (optional, interaktiv abgefragt)
 
 ### Keys auf dem VPS
 
