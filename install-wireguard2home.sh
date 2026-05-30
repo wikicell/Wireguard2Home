@@ -777,16 +777,50 @@ prompt_runtime_defaults() {
   fi
 }
 
-ensure_docker() {
-  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-    return
+install_compose_plugin() {
+  # Compose V2 heisst je nach Distribution unterschiedlich:
+  #  - Ubuntu/Debian Universe:     docker-compose-v2
+  #  - Docker-eigenes APT-Repo:    docker-compose-plugin
+  #  - Aelteres Standalone (V1):   docker-compose
+  if docker compose version >/dev/null 2>&1; then
+    return 0
   fi
+
+  local candidate
+  for candidate in docker-compose-v2 docker-compose-plugin; do
+    if apt-get install -y "$candidate" >/dev/null 2>&1; then
+      log "Compose-Plugin installiert: ${candidate}"
+      if docker compose version >/dev/null 2>&1; then
+        return 0
+      fi
+    fi
+  done
+
+  # Fallback: Standalone docker-compose (V1)
+  if apt-get install -y docker-compose >/dev/null 2>&1; then
+    log "Standalone docker-compose (V1) als Fallback installiert."
+    if command -v docker-compose >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  log "Warnung: Konnte kein Docker-Compose-Plugin finden."
+  log "Bitte manuell installieren (z. B. 'apt-get install docker-compose-v2')."
+  return 1
+}
+
+ensure_docker() {
   export DEBIAN_FRONTEND=noninteractive
-  log "Installiere Docker und Compose-Plugin..."
-  apt-get update
-  apt-get install -y docker.io docker-compose-plugin
+
+  if ! command -v docker >/dev/null 2>&1; then
+    log "Installiere Docker-Engine (docker.io)..."
+    apt-get install -y docker.io
+  fi
+
   systemctl enable docker >/dev/null 2>&1 || true
   systemctl start docker >/dev/null 2>&1 || true
+
+  install_compose_plugin || true
 }
 
 compose_up() {
@@ -835,9 +869,7 @@ install_packages() {
 
   if [ "$ENABLE_DOCKER" -eq 1 ]; then
     log "Installiere Docker-Pakete..."
-    apt-get install -y docker.io docker-compose-plugin
-    systemctl enable docker >/dev/null 2>&1 || true
-    systemctl start docker >/dev/null 2>&1 || true
+    ensure_docker
   fi
 }
 
@@ -1193,9 +1225,11 @@ main() {
   ensure_dir "$STATE_DIR" 700
   ensure_dir "$BACKUP_DIR" 700
   ensure_dir "$PRE_RESTORE_DIR" 700
-  ensure_dir "$(dirname "$TARGET_SCRIPT")" 700
   ensure_dir "$NPM_DIR" 700
   ensure_dir "$WATCHTOWER_DIR" 700
+  ensure_dir "$UPTIME_DIR" 700
+  ensure_dir "$CROWDSEC_DIR" 700
+  ensure_dir "$(dirname "$TARGET_SCRIPT")" 700
 
   write_runtime_config
   deploy_main_script
@@ -1204,6 +1238,12 @@ main() {
   write_wg_template_if_missing
   configure_kernel_network
   enable_services
+  ensure_owner_access "$CLIENT_DIR"
+  ensure_owner_access "$STATE_DIR"
+  ensure_owner_access "$BACKUP_DIR"
+  ensure_owner_access "$PRE_RESTORE_DIR"
+  ensure_owner_access "$CONFIG_FILE"
+  ensure_owner_access "$TARGET_SCRIPT"
 
   if [ "$ENABLE_REVERSE_PROXY" -eq 1 ]; then
     deploy_reverse_proxy
@@ -1212,12 +1252,6 @@ main() {
     deploy_monitoring
   fi
 
-  ensure_owner_access "$CLIENT_DIR"
-  ensure_owner_access "$STATE_DIR"
-  ensure_owner_access "$BACKUP_DIR"
-  ensure_owner_access "$PRE_RESTORE_DIR"
-  ensure_owner_access "$CONFIG_FILE"
-  ensure_owner_access "$TARGET_SCRIPT"
   print_summary
 }
 
