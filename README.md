@@ -668,24 +668,50 @@ Das Setup ist reboot-sicher.
 
 # Monitoring Stack
 
-Aktuell integriert:
+Optionaler Docker-Stack auf dem VPS, aktivierbar mit `--with-monitoring`:
 
-* Uptime Kuma
-* PushOver
-* CrowdSec
-* Fail2Ban
-* Watchtower
+* Uptime Kuma — Verfügbarkeits-Monitoring (Port `3001`)
+* Watchtower — automatische Container-Updates
+* CrowdSec — Angriffserkennung (SSH + Nginx Proxy Manager)
+* Pushover — Benachrichtigungen über Watchtower (Token/User interaktiv oder per `--pushover-token` / `--pushover-user`)
+* Fail2Ban — Host-seitig über `--with-ufw-fail2ban`
+
+Beispiel:
+
+```bash
+sudo ./install-vps.sh --with-monitoring
+```
+
+Hinweise:
+
+* `--with-monitoring` installiert bei Bedarf automatisch Docker und das Compose-Plugin.
+* Der CrowdSec **Firewall-Bouncer** ist standardmäßig **aus** (Schutz vor versehentlichem SSH-Aussperren) und lässt sich mit `--with-crowdsec-bouncer` aktivieren.
+* Pushover-Secrets landen ausschließlich in einer root-only `/opt/watchtower/.env` — niemals im Repository.
 
 ---
 
 # Reverse Proxy
 
-Genutzt wird:
+Optionaler Docker-Stack auf dem VPS, aktivierbar mit `--with-reverse-proxy`:
 
-* Nginx Proxy Manager
-* automatische SSL Zertifikate
+* Nginx Proxy Manager — Admin-UI auf Port `81`, HTTP/HTTPS auf `80`/`443`
+* automatische SSL-Zertifikate (Let's Encrypt)
 * externe Domains
-* Heimnetz Reverse Proxying
+* Heimnetz Reverse Proxying (über den WireGuard-Tunnel zum Gateway-Host)
+
+Beispiel:
+
+```bash
+sudo ./install-vps.sh --with-reverse-proxy
+```
+
+Erst-Login im Nginx Proxy Manager: `admin@example.com` / `changeme` — bitte sofort ändern.
+
+Beide Stacks lassen sich kombinieren:
+
+```bash
+sudo ./install-vps.sh --with-reverse-proxy --with-monitoring
+```
 
 ---
 

@@ -480,6 +480,8 @@ BACKUP_DIR="${WIREGUARD2HOME_BACKUP_BASE:-${SERVICE_HOME}/backups/gate2home}"
 PRE_RESTORE_DIR="${WIREGUARD2HOME_PRE_RESTORE_ROOT:-${SERVICE_HOME}/pre-restore-backups}"
 NPM_DIR="/opt/npm"
 WATCHTOWER_DIR="/opt/watchtower"
+UPTIME_DIR="/opt/uptime-kuma"
+CROWDSEC_DIR="/opt/crowdsec"
 
 BACKUP_SSH_KEY="${WIREGUARD2HOME_BACKUP_SSH_KEY:-${BACKUP_SSH_HOME}/.ssh/gate2home_backup}"
 BACKUP_SSH_COMMENT="wireguard2home-backup@$(hostname -s 2>/dev/null || hostname)"
@@ -494,6 +496,11 @@ SPEEDTEST_SSH_KEY="${WIREGUARD2HOME_SPEEDTEST_SSH_KEY:-$BACKUP_SSH_KEY}"
 SPEEDTEST_SIZE_MB="${WIREGUARD2HOME_SPEEDTEST_SIZE_MB:-64}"
 ENABLE_UFW_FAIL2BAN=0
 ENABLE_DOCKER=0
+ENABLE_MONITORING=0
+ENABLE_REVERSE_PROXY=0
+ENABLE_CROWDSEC_BOUNCER=0
+PUSHOVER_TOKEN="${WIREGUARD2HOME_PUSHOVER_TOKEN:-}"
+PUSHOVER_USER="${WIREGUARD2HOME_PUSHOVER_USER:-}"
 
 usage() {
   cat <<EOF
@@ -525,8 +532,14 @@ Optionen:
   --speedtest-host HOST        Zielhost fuer den Tunnel-Speedtest
   --speedtest-ssh-key PFAD     SSH-Key fuer den Tunnel-Speedtest
   --speedtest-size-mb N        Datenmenge pro Speedtest-Richtung
-  --with-ufw-fail2ban          Installiert zusaetzlich ufw und fail2ban
+  --with-ufw-fail2ban          Installiert zusaetzlich ufw und fail2ban (Host)
   --with-docker                Installiert zusaetzlich docker.io und docker-compose-plugin
+  --with-reverse-proxy         Reverse-Proxy-Stack: Nginx Proxy Manager (impliziert --with-docker)
+  --with-monitoring            Monitoring-Stack: Uptime Kuma, Watchtower, CrowdSec (impliziert --with-docker)
+  --with-crowdsec-bouncer      Aktiviert zusaetzlich den CrowdSec Firewall-Bouncer
+                               (standardmaessig AUS, um SSH-Aussperren zu vermeiden)
+  --pushover-token TOKEN       Pushover API-Token fuer Benachrichtigungen (optional)
+  --pushover-user KEY          Pushover User-Key fuer Benachrichtigungen (optional)
   --help                       Diese Hilfe anzeigen
 EOF
 }
@@ -673,6 +686,28 @@ parse_args() {
         ENABLE_UFW_FAIL2BAN=1
         shift
         ;;
+      --with-reverse-proxy)
+        ENABLE_REVERSE_PROXY=1
+        ENABLE_DOCKER=1
+        shift
+        ;;
+      --with-monitoring)
+        ENABLE_MONITORING=1
+        ENABLE_DOCKER=1
+        shift
+        ;;
+      --with-crowdsec-bouncer)
+        ENABLE_CROWDSEC_BOUNCER=1
+        shift
+        ;;
+      --pushover-token)
+        PUSHOVER_TOKEN="$2"
+        shift 2
+        ;;
+      --pushover-user)
+        PUSHOVER_USER="$2"
+        shift 2
+        ;;
       --with-docker)
         ENABLE_DOCKER=1
         shift
@@ -722,6 +757,48 @@ prompt_runtime_defaults() {
   read -r -p "Wert fuer Router-DNS-Preset [${DNS_ROUTER_VALUE}]: " DNS_ROUTER_VALUE_INPUT
   if [ -n "${DNS_ROUTER_VALUE_INPUT:-}" ]; then
     DNS_ROUTER_VALUE="$DNS_ROUTER_VALUE_INPUT"
+  fi
+
+  if [ "$ENABLE_MONITORING" -eq 1 ] && [ -t 0 ]; then
+    echo ""
+    echo "Pushover-Benachrichtigungen (optional, leer lassen zum Ueberspringen)."
+    if [ -z "$PUSHOVER_TOKEN" ]; then
+      read -r -p "Pushover API-Token: " PUSHOVER_TOKEN_INPUT
+      if [ -n "${PUSHOVER_TOKEN_INPUT:-}" ]; then
+        PUSHOVER_TOKEN="$PUSHOVER_TOKEN_INPUT"
+      fi
+    fi
+    if [ -z "$PUSHOVER_USER" ]; then
+      read -r -p "Pushover User-Key: " PUSHOVER_USER_INPUT
+      if [ -n "${PUSHOVER_USER_INPUT:-}" ]; then
+        PUSHOVER_USER="$PUSHOVER_USER_INPUT"
+      fi
+    fi
+  fi
+}
+
+ensure_docker() {
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    return
+  fi
+  export DEBIAN_FRONTEND=noninteractive
+  log "Installiere Docker und Compose-Plugin..."
+  apt-get update
+  apt-get install -y docker.io docker-compose-plugin
+  systemctl enable docker >/dev/null 2>&1 || true
+  systemctl start docker >/dev/null 2>&1 || true
+}
+
+compose_up() {
+  # $1 = Verzeichnis mit docker-compose.yml
+  local dir="$1"
+  if docker compose version >/dev/null 2>&1; then
+    ( cd "$dir" && docker compose up -d )
+  elif command -v docker-compose >/dev/null 2>&1; then
+    ( cd "$dir" && docker-compose up -d )
+  else
+    log "Fehler: Docker Compose nicht verfuegbar – ueberspringe ${dir}."
+    return 1
   fi
 }
 
@@ -942,6 +1019,165 @@ print_summary() {
   echo "3. WireGuard mit systemctl restart wg-quick@${WG_IFACE} pruefen."
   echo "4. ${TARGET_SCRIPT} starten."
   echo ""
+
+  if [ "$ENABLE_REVERSE_PROXY" -eq 1 ] || [ "$ENABLE_MONITORING" -eq 1 ]; then
+    local host_ip="${WG_ENDPOINT%%:*}"
+    [ -z "$host_ip" ] && host_ip="<VPS-IP>"
+    echo "Zusatz-Stack (Docker):"
+    if [ "$ENABLE_REVERSE_PROXY" -eq 1 ]; then
+      echo "  Nginx Proxy Manager: http://${host_ip}:81"
+      echo "    Erst-Login: admin@example.com / changeme (sofort aendern!)"
+      echo "    Daten:      ${NPM_DIR}"
+    fi
+    if [ "$ENABLE_MONITORING" -eq 1 ]; then
+      echo "  Uptime Kuma:         http://${host_ip}:3001 (Admin beim ersten Aufruf anlegen)"
+      echo "  Watchtower:          aktiv (${WATCHTOWER_DIR})"
+      echo "  CrowdSec:            aktiv (${CROWDSEC_DIR})"
+      if [ -n "$PUSHOVER_TOKEN" ] && [ -n "$PUSHOVER_USER" ]; then
+        echo "  Pushover:            konfiguriert (Watchtower-Notifications)"
+      else
+        echo "  Pushover:            nicht gesetzt – in ${WATCHTOWER_DIR}/.env nachtragen"
+      fi
+    fi
+    echo ""
+    echo "WICHTIG: Firewall/Ports 80, 443, 81, 3001 am VPS ggf. freigeben."
+    echo ""
+  fi
+}
+
+write_pushover_env() {
+  # Schreibt eine root-only .env mit optionalen Pushover-Notifications.
+  # $1 = Zielpfad der .env
+  local env_path="$1"
+  {
+    echo "# Wireguard2Home Monitoring – automatisch erzeugt"
+    echo "# Pushover-Benachrichtigungen (optional). Leer = deaktiviert."
+    if [ -n "$PUSHOVER_TOKEN" ] && [ -n "$PUSHOVER_USER" ]; then
+      echo "WATCHTOWER_NOTIFICATIONS=shoutrrr"
+      echo "WATCHTOWER_NOTIFICATION_URL=pushover://shoutrrr:${PUSHOVER_TOKEN}@${PUSHOVER_USER}"
+      echo "PUSHOVER_TOKEN=${PUSHOVER_TOKEN}"
+      echo "PUSHOVER_USER=${PUSHOVER_USER}"
+    else
+      echo "# PUSHOVER_TOKEN=CHANGE_ME"
+      echo "# PUSHOVER_USER=CHANGE_ME"
+      echo "# Danach in /opt/watchtower/.env eintragen:"
+      echo "# WATCHTOWER_NOTIFICATIONS=shoutrrr"
+      echo "# WATCHTOWER_NOTIFICATION_URL=pushover://shoutrrr:CHANGE_ME_TOKEN@CHANGE_ME_USER"
+    fi
+  } > "$env_path"
+  chmod 600 "$env_path"
+}
+
+deploy_reverse_proxy() {
+  log "Richte Reverse Proxy (Nginx Proxy Manager) ein..."
+  ensure_docker
+  ensure_dir "$NPM_DIR" 700
+  ensure_dir "${NPM_DIR}/data" 700
+  ensure_dir "${NPM_DIR}/letsencrypt" 700
+
+  cat > "${NPM_DIR}/docker-compose.yml" <<'____NPM_COMPOSE____'
+services:
+  npm:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: npm
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "81:81"
+    volumes:
+      - ./data:/data
+      - ./letsencrypt:/etc/letsencrypt
+____NPM_COMPOSE____
+  chmod 600 "${NPM_DIR}/docker-compose.yml"
+
+  compose_up "$NPM_DIR" || log "Hinweis: NPM-Stack konnte nicht gestartet werden."
+}
+
+deploy_monitoring() {
+  log "Richte Monitoring-Stack ein (Uptime Kuma, Watchtower, CrowdSec)..."
+  ensure_docker
+
+  # --- Uptime Kuma ---
+  ensure_dir "$UPTIME_DIR" 700
+  ensure_dir "${UPTIME_DIR}/data" 700
+  cat > "${UPTIME_DIR}/docker-compose.yml" <<'____UPTIME_COMPOSE____'
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./data:/app/data
+____UPTIME_COMPOSE____
+  chmod 600 "${UPTIME_DIR}/docker-compose.yml"
+  compose_up "$UPTIME_DIR" || log "Hinweis: Uptime-Kuma-Stack konnte nicht gestartet werden."
+
+  # --- Watchtower (mit optionalen Pushover-Notifications) ---
+  ensure_dir "$WATCHTOWER_DIR" 700
+  write_pushover_env "${WATCHTOWER_DIR}/.env"
+  cat > "${WATCHTOWER_DIR}/docker-compose.yml" <<'____WATCHTOWER_COMPOSE____'
+services:
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_SCHEDULE=0 0 4 * * *
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+____WATCHTOWER_COMPOSE____
+  chmod 600 "${WATCHTOWER_DIR}/docker-compose.yml"
+  compose_up "$WATCHTOWER_DIR" || log "Hinweis: Watchtower-Stack konnte nicht gestartet werden."
+
+  # --- CrowdSec (Detection; Firewall-Bouncer nur auf Wunsch) ---
+  ensure_dir "$CROWDSEC_DIR" 700
+  ensure_dir "${CROWDSEC_DIR}/config" 700
+  ensure_dir "${CROWDSEC_DIR}/data" 700
+  cat > "${CROWDSEC_DIR}/config/acquis.yaml" <<'____CROWDSEC_ACQUIS____'
+---
+filenames:
+  - /var/log/auth.log
+labels:
+  type: syslog
+---
+filenames:
+  - /opt/npm/data/logs/*.log
+labels:
+  type: nginx
+____CROWDSEC_ACQUIS____
+  chmod 600 "${CROWDSEC_DIR}/config/acquis.yaml"
+
+  cat > "${CROWDSEC_DIR}/docker-compose.yml" <<'____CROWDSEC_COMPOSE____'
+services:
+  crowdsec:
+    image: crowdsecurity/crowdsec:latest
+    container_name: crowdsec
+    restart: unless-stopped
+    environment:
+      - COLLECTIONS=crowdsecurity/sshd crowdsecurity/nginx-proxy-manager
+    volumes:
+      - ./config:/etc/crowdsec
+      - ./data:/var/lib/crowdsec/data
+      - /var/log:/var/log:ro
+      - /opt/npm/data/logs:/opt/npm/data/logs:ro
+____CROWDSEC_COMPOSE____
+  chmod 600 "${CROWDSEC_DIR}/docker-compose.yml"
+  compose_up "$CROWDSEC_DIR" || log "Hinweis: CrowdSec-Stack konnte nicht gestartet werden."
+
+  if [ "$ENABLE_CROWDSEC_BOUNCER" -eq 1 ]; then
+    log "Installiere CrowdSec Firewall-Bouncer auf dem Host..."
+    apt-get install -y crowdsec-firewall-bouncer-iptables 2>/dev/null \
+      || log "Hinweis: Firewall-Bouncer-Paket nicht verfuegbar – bitte manuell einrichten."
+  else
+    log "CrowdSec Firewall-Bouncer NICHT aktiviert (Schutz vor SSH-Aussperren)."
+    log "Aktivierung optional mit --with-crowdsec-bouncer."
+  fi
 }
 
 main() {
@@ -968,6 +1204,14 @@ main() {
   write_wg_template_if_missing
   configure_kernel_network
   enable_services
+
+  if [ "$ENABLE_REVERSE_PROXY" -eq 1 ]; then
+    deploy_reverse_proxy
+  fi
+  if [ "$ENABLE_MONITORING" -eq 1 ]; then
+    deploy_monitoring
+  fi
+
   ensure_owner_access "$CLIENT_DIR"
   ensure_owner_access "$STATE_DIR"
   ensure_owner_access "$BACKUP_DIR"
