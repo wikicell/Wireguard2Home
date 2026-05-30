@@ -974,6 +974,7 @@ BACKUP_AUTH_HOME="$(resolve_user_home "$BACKUP_AUTH_USER" "${WIREGUARD2HOME_BACK
 WG_IFACE="wg0"
 WG_DIR="/etc/wireguard"
 WG_CONF="${WG_DIR}/${WG_IFACE}.conf"
+VPS_PEER_FILE="${WG_DIR}/vps-peer.conf"
 WG_PI_IP_CIDR="10.100.0.2/24"
 WG_NETWORK_CIDR="10.100.0.0/24"
 LAN_SUBNET="192.168.50.0/24"
@@ -1351,6 +1352,21 @@ write_raspberry_template_if_missing() {
   log "Template fuer ${WG_CONF} wurde angelegt."
 }
 
+write_vps_peer_file() {
+  local gateway_public_key
+  gateway_public_key="$(cat "${WG_DIR}/raspberry_public.key")"
+
+  {
+    echo "[Peer]"
+    echo "PublicKey = ${gateway_public_key}"
+    echo "AllowedIPs = 10.100.0.2/32, ${LAN_SUBNET}"
+    echo "PersistentKeepalive = 25"
+  } > "$VPS_PEER_FILE"
+
+  chmod 600 "$VPS_PEER_FILE"
+  log "Peer-Block fuer den VPS abgelegt unter ${VPS_PEER_FILE}."
+}
+
 enable_services() {
   if [ "$HAS_SYSTEMCTL" -ne 1 ]; then
     log "Hinweis: Kein laufendes systemd erkannt. Dienste bitte manuell aktivieren."
@@ -1380,7 +1396,7 @@ print_summary() {
   echo "Gateway-Host Public Key:"
   echo "  ${gateway_public_key}"
   echo ""
-  echo "Peer-Block fuer den VPS:"
+  echo "Peer-Block fuer den VPS (auch gespeichert unter ${VPS_PEER_FILE}):"
   echo ""
   echo "[Peer]"
   echo "PublicKey = ${gateway_public_key}"
@@ -1388,7 +1404,8 @@ print_summary() {
   echo "PersistentKeepalive = 25"
   echo ""
   echo "Naechste Schritte:"
-  echo "1. Obigen Peer-Block in ${WG_IFACE}.conf auf dem VPS eintragen."
+  echo "1. Obigen Peer-Block in ${WG_IFACE}.conf auf dem VPS eintragen"
+  echo "   (beim Gateway-Setup ueber den Bootstrap-Installer geschieht das automatisch)."
   echo "2. Auf dem Gateway-Host den korrekten VPS Public Key in ${WG_CONF} pruefen."
   echo "3. Backup-SSH vom VPS zum Gateway-Host testen."
   if [ "$HAS_SYSTEMCTL" -eq 1 ]; then
@@ -1416,6 +1433,7 @@ main() {
   configure_ip_forwarding
   install_vps_backup_key
   write_raspberry_template_if_missing
+  write_vps_peer_file
   enable_services
   print_summary
 }
@@ -6244,6 +6262,85 @@ fetch_remote_value() {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Transfer the gateway peer block to the VPS and merge it into wg0.conf
+# ──────────────────────────────────────────────────────────────────────────────
+
+apply_peer_to_vps() {
+  local local_peer="/etc/wireguard/vps-peer.conf"
+  if [ ! -f "$local_peer" ]; then
+    log "Hinweis: ${local_peer} nicht gefunden – Peer-Block wird nicht automatisch uebertragen."
+    return 0
+  fi
+
+  local ssh_cmd scp_cmd
+  ssh_cmd="$(build_ssh_cmd)"
+  scp_cmd="$(build_scp_cmd)"
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  (
+    trap 'rm -rf "$tmp_dir"' EXIT
+
+    # Idempotentes Merge-Skript fuer den VPS
+    cat > "$tmp_dir/merge-peer.sh" <<'____W2H_MERGE_PEER____'
+#!/bin/bash
+set -euo pipefail
+WG_IFACE="wg0"
+WG_CONF="/etc/wireguard/${WG_IFACE}.conf"
+PEER_FILE="$1"
+
+pubkey="$(awk -F' = ' '/^PublicKey/{gsub(/[[:space:]]/,"",$2); print $2; exit}' "$PEER_FILE")"
+if [ -z "$pubkey" ]; then
+  echo "Fehler: Kein PublicKey in $PEER_FILE gefunden." >&2
+  exit 1
+fi
+
+if [ ! -f "$WG_CONF" ]; then
+  echo "Fehler: $WG_CONF existiert nicht." >&2
+  exit 1
+fi
+
+# Vorhandenen [Peer]-Block mit gleichem PublicKey entfernen (idempotent)
+tmp_conf="$(mktemp)"
+awk -v key="$pubkey" '
+  BEGIN { RS=""; FS="\n" }
+  {
+    if ($0 ~ /\[Peer\]/ && $0 ~ key) { next }
+    printf "%s%s", (printed++ ? "\n\n" : ""), $0
+  }
+  END { if (printed) print "" }
+' "$WG_CONF" > "$tmp_conf"
+
+# Neuen Peer-Block anhaengen
+{
+  echo ""
+  cat "$PEER_FILE"
+} >> "$tmp_conf"
+
+install -m 600 "$tmp_conf" "$WG_CONF"
+rm -f "$tmp_conf"
+
+# Live anwenden, ohne bestehende Tunnel zu kappen
+if command -v wg-quick >/dev/null 2>&1 && wg show "$WG_IFACE" >/dev/null 2>&1; then
+  if ! wg syncconf "$WG_IFACE" <(wg-quick strip "$WG_IFACE") 2>/dev/null; then
+    systemctl restart "wg-quick@${WG_IFACE}" 2>/dev/null || true
+  fi
+else
+  systemctl restart "wg-quick@${WG_IFACE}" 2>/dev/null || true
+fi
+echo "Peer ${pubkey} in ${WG_CONF} aktiv."
+____W2H_MERGE_PEER____
+
+    log "Uebertrage Peer-Block auf den VPS ..."
+    $scp_cmd "$local_peer" "${VPS_HOST}:${REMOTE_INSTALL_DIR}/vps-peer.conf"
+    $scp_cmd "$tmp_dir/merge-peer.sh" "${VPS_HOST}:${REMOTE_INSTALL_DIR}/merge-peer.sh"
+
+    log "Trage Peer-Block auf dem VPS ein und lade WireGuard neu ..."
+    $ssh_cmd "$VPS_HOST" "bash $(shell_escape "${REMOTE_INSTALL_DIR}/merge-peer.sh") $(shell_escape "${REMOTE_INSTALL_DIR}/vps-peer.conf") && rm -f $(shell_escape "${REMOTE_INSTALL_DIR}/merge-peer.sh") $(shell_escape "${REMOTE_INSTALL_DIR}/vps-peer.conf")"
+  )
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Local VPS installation
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -6340,12 +6437,16 @@ install_gateway_local_and_vps_remote() {
     --lan-subnet "$LAN_SUBNET" \
     "${RASPBERRY_INSTALL_ARGS[@]}"
 
+  # Gateway-Peer automatisch auf den VPS uebertragen und WireGuard neu laden
+  apply_peer_to_vps
+
   ssh_mux_stop
   trap - EXIT
 
   echo ""
   echo "Der VPS wurde remote vorbereitet und der Gateway-Host lokal installiert."
-  echo "Jetzt den vom Gateway-Installer ausgegebenen Peer-Block auf dem VPS pruefen oder uebernehmen."
+  echo "Der Peer-Block des Gateway-Hosts wurde automatisch in die wg0.conf des VPS"
+  echo "eingetragen und WireGuard neu geladen. Eine manuelle Uebernahme ist nicht noetig."
   echo ""
 }
 

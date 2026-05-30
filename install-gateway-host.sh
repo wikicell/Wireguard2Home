@@ -33,6 +33,7 @@ BACKUP_AUTH_HOME="$(resolve_user_home "$BACKUP_AUTH_USER" "${WIREGUARD2HOME_BACK
 WG_IFACE="wg0"
 WG_DIR="/etc/wireguard"
 WG_CONF="${WG_DIR}/${WG_IFACE}.conf"
+VPS_PEER_FILE="${WG_DIR}/vps-peer.conf"
 WG_PI_IP_CIDR="10.100.0.2/24"
 WG_NETWORK_CIDR="10.100.0.0/24"
 LAN_SUBNET="192.168.50.0/24"
@@ -410,6 +411,21 @@ write_raspberry_template_if_missing() {
   log "Template fuer ${WG_CONF} wurde angelegt."
 }
 
+write_vps_peer_file() {
+  local gateway_public_key
+  gateway_public_key="$(cat "${WG_DIR}/raspberry_public.key")"
+
+  {
+    echo "[Peer]"
+    echo "PublicKey = ${gateway_public_key}"
+    echo "AllowedIPs = 10.100.0.2/32, ${LAN_SUBNET}"
+    echo "PersistentKeepalive = 25"
+  } > "$VPS_PEER_FILE"
+
+  chmod 600 "$VPS_PEER_FILE"
+  log "Peer-Block fuer den VPS abgelegt unter ${VPS_PEER_FILE}."
+}
+
 enable_services() {
   if [ "$HAS_SYSTEMCTL" -ne 1 ]; then
     log "Hinweis: Kein laufendes systemd erkannt. Dienste bitte manuell aktivieren."
@@ -439,7 +455,7 @@ print_summary() {
   echo "Gateway-Host Public Key:"
   echo "  ${gateway_public_key}"
   echo ""
-  echo "Peer-Block fuer den VPS:"
+  echo "Peer-Block fuer den VPS (auch gespeichert unter ${VPS_PEER_FILE}):"
   echo ""
   echo "[Peer]"
   echo "PublicKey = ${gateway_public_key}"
@@ -447,7 +463,8 @@ print_summary() {
   echo "PersistentKeepalive = 25"
   echo ""
   echo "Naechste Schritte:"
-  echo "1. Obigen Peer-Block in ${WG_IFACE}.conf auf dem VPS eintragen."
+  echo "1. Obigen Peer-Block in ${WG_IFACE}.conf auf dem VPS eintragen"
+  echo "   (beim Gateway-Setup ueber den Bootstrap-Installer geschieht das automatisch)."
   echo "2. Auf dem Gateway-Host den korrekten VPS Public Key in ${WG_CONF} pruefen."
   echo "3. Backup-SSH vom VPS zum Gateway-Host testen."
   if [ "$HAS_SYSTEMCTL" -eq 1 ]; then
@@ -475,6 +492,7 @@ main() {
   configure_ip_forwarding
   install_vps_backup_key
   write_raspberry_template_if_missing
+  write_vps_peer_file
   enable_services
   print_summary
 }
