@@ -668,7 +668,7 @@ wireguard_get_client_files_ordered() {
 }
 
 speedtest_start_remote_iperf_server() {
-  ssh -i "$SPEEDTEST_SSH_KEY" -o BatchMode=yes -o ConnectTimeout=10 "${SPEEDTEST_USER}@${SPEEDTEST_HOST}" \
+  ssh -i "$SPEEDTEST_SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "${SPEEDTEST_USER}@${SPEEDTEST_HOST}" \
     "nohup iperf3 -s -1 >/tmp/wireguard2home-iperf3.log 2>&1 &"
 }
 
@@ -713,9 +713,24 @@ run_tunnel_speedtest() {
   echo "Hinweis: SSH dient nur zum Starten des Remote-iperf3-Servers."
   echo ""
 
-  if ! ssh -i "$SPEEDTEST_SSH_KEY" -o BatchMode=yes -o ConnectTimeout=10 "${SPEEDTEST_USER}@${SPEEDTEST_HOST}" "command -v iperf3 >/dev/null && true" >/dev/null 2>&1; then
-    echo "Fehler: Gegenstelle fuer den Tunnel-Speedtest nicht erreichbar."
-    echo "Pruefe SSH-Zugriff und ob iperf3 auf beiden Seiten installiert ist."
+  SSH_PROBE_OUTPUT="$(ssh -i "$SPEEDTEST_SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "${SPEEDTEST_USER}@${SPEEDTEST_HOST}" "command -v iperf3 >/dev/null 2>&1 && echo IPERF_OK || echo IPERF_MISSING" 2>&1)"
+  SSH_PROBE_STATUS=$?
+
+  if [ "$SSH_PROBE_STATUS" -ne 0 ]; then
+    echo "Fehler: SSH-Verbindung zum Gateway-Host (${SPEEDTEST_USER}@${SPEEDTEST_HOST}) fehlgeschlagen."
+    echo "Moegliche Ursachen:"
+    echo "  - WireGuard-Tunnel ist nicht aktiv (pruefe: wg show)."
+    echo "  - Der Gateway-Host hat den Speedtest-Key noch nicht autorisiert."
+    echo "  - SSH-Key fehlt oder ist falsch: ${SPEEDTEST_SSH_KEY}"
+    echo ""
+    echo "SSH-Meldung:"
+    printf '  %s\n' "$SSH_PROBE_OUTPUT"
+    return
+  fi
+
+  if ! printf '%s\n' "$SSH_PROBE_OUTPUT" | grep -q 'IPERF_OK'; then
+    echo "Fehler: iperf3 ist auf dem Gateway-Host (${SPEEDTEST_HOST}) nicht installiert."
+    echo "Installiere es dort, z. B.: sudo apt-get install -y iperf3"
     return
   fi
 
