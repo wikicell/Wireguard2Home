@@ -103,6 +103,38 @@ require_command() {
   fi
 }
 
+# Stellt den SSH-Client (ssh/scp) sicher. openssh-server liefert nur den
+# Daemon (sshd); der Client kommt je nach Distribution aus einem eigenen Paket.
+ensure_ssh_client() {
+  if command -v ssh >/dev/null 2>&1 && command -v scp >/dev/null 2>&1; then
+    return
+  fi
+
+  log "SSH-Client (ssh/scp) nicht gefunden – Installation wird versucht ..."
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y openssh-client
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y openssh-clients
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y openssh-clients
+  elif command -v pacman >/dev/null 2>&1; then
+    pacman -Sy --noconfirm openssh
+  elif command -v zypper >/dev/null 2>&1; then
+    zypper --non-interactive install openssh-clients
+  else
+    echo "Fehler: Konnte SSH-Client nicht automatisch installieren."
+    echo "Bitte 'openssh-client' (bzw. 'openssh-clients') manuell installieren."
+    exit 1
+  fi
+
+  if ! command -v ssh >/dev/null 2>&1 || ! command -v scp >/dev/null 2>&1; then
+    echo "Fehler: SSH-Client (ssh/scp) ist weiterhin nicht verfuegbar."
+    exit 1
+  fi
+}
+
 shell_escape() {
   printf '%q' "$1"
 }
@@ -1154,6 +1186,7 @@ install_packages() {
         rsync \
         iperf3 \
         openssh-server \
+        openssh-client \
         tar \
         gawk \
         iproute2 \
@@ -1167,6 +1200,7 @@ install_packages() {
         rsync \
         iperf3 \
         openssh-server \
+        openssh-clients \
         tar \
         gawk \
         iproute \
@@ -1180,6 +1214,7 @@ install_packages() {
         rsync \
         iperf3 \
         openssh-server \
+        openssh-clients \
         tar \
         gawk \
         iproute \
@@ -6399,7 +6434,7 @@ install_vps_local() {
 # ──────────────────────────────────────────────────────────────────────────────
 
 install_gateway_local_and_vps_remote() {
-  require_command ssh
+  ensure_ssh_client
 
   if [ -z "$VPS_HOST" ]; then
     echo "Fehler: Fuer den Gateway-Modus ist --vps-host USER@HOST erforderlich."

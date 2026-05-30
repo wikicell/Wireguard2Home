@@ -213,6 +213,7 @@ install_packages() {
         rsync \
         iperf3 \
         openssh-server \
+        openssh-client \
         tar \
         gawk \
         iproute2 \
@@ -226,6 +227,7 @@ install_packages() {
         rsync \
         iperf3 \
         openssh-server \
+        openssh-clients \
         tar \
         gawk \
         iproute \
@@ -239,6 +241,7 @@ install_packages() {
         rsync \
         iperf3 \
         openssh-server \
+        openssh-clients \
         tar \
         gawk \
         iproute \
