@@ -334,7 +334,7 @@ parse_args() {
       --help|-h)
         usage; exit 0 ;;
       *)
-        log "Unbekannte Option '$1' wird an den Gateway-Installer weitergeleitet."
+        log "Option '$1' wird an den jeweiligen Installer (VPS/Gateway) weitergereicht."
         RASPBERRY_INSTALL_ARGS+=("$1")
         shift
         ;;
@@ -6470,14 +6470,11 @@ ensure_local_script() {
     return
   fi
 
-  # Tier 2: already deployed at SERVICE_HOME
-  if [ -f "$default_target" ]; then
-    chmod 700 "$default_target"
-    echo "$default_target"
-    return
-  fi
+  # Hinweis: Eine bereits am Zielpfad liegende (evtl. veraltete) Datei wird
+  # bewusst NICHT bevorzugt. Der Bootstrap rollt immer seine eingebetteten
+  # Versionen aus, damit Updates (neue Flags, Bugfixes) zuverlaessig greifen.
 
-  # Tier 3: extract from embedded heredoc
+  # Tier 2: extract from embedded heredoc (Quelle der Wahrheit fuer diesen Bootstrap)
   log "Extrahiere ${script_name} nach ${default_target} ..."
   mkdir -p "$(dirname "$default_target")"
   if extract_script "$script_name" "$default_target" 2>/dev/null; then
@@ -6741,7 +6738,8 @@ install_vps_local() {
     --dns-home-label "$DNS_HOME_LABEL" \
     --dns-home-value "$DNS_HOME_VALUE" \
     --dns-router-label "$DNS_ROUTER_LABEL" \
-    --dns-router-value "$DNS_ROUTER_VALUE"
+    --dns-router-value "$DNS_ROUTER_VALUE" \
+    ${RASPBERRY_INSTALL_ARGS[@]+"${RASPBERRY_INSTALL_ARGS[@]}"}
 
   local active_server_key=""
   local backup_key=""
