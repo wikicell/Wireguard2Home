@@ -692,6 +692,87 @@ Hinweise:
 * Der CrowdSec **Firewall-Bouncer** ist standardmäßig **aus** (Schutz vor versehentlichem SSH-Aussperren) und lässt sich mit `--with-crowdsec-bouncer` aktivieren.
 * Pushover-Secrets landen ausschließlich in einer root-only `/opt/watchtower/.env` — niemals im Repository.
 
+## Compose-Dateien (Monitoring)
+
+Der Installer legt die folgenden Dateien an. Sie sind hier dokumentiert, falls
+du sie manuell prüfen, anpassen oder ohne den Installer ausrollen möchtest.
+
+### Uptime Kuma — `/opt/uptime-kuma/docker-compose.yml`
+
+```yaml
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./data:/app/data
+```
+
+### Watchtower — `/opt/watchtower/docker-compose.yml`
+
+```yaml
+services:
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_SCHEDULE=0 0 4 * * *
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+```
+
+Die zugehörige `/opt/watchtower/.env` (Modus `600`, nur `root`) enthält bei
+gesetzten Pushover-Werten:
+
+```ini
+WATCHTOWER_NOTIFICATIONS=shoutrrr
+WATCHTOWER_NOTIFICATION_URL=pushover://shoutrrr:<TOKEN>@<USER>
+PUSHOVER_TOKEN=<TOKEN>
+PUSHOVER_USER=<USER>
+```
+
+Ohne Pushover bleiben diese Zeilen auskommentiert und Watchtower läuft ohne
+Benachrichtigungen.
+
+### CrowdSec — `/opt/crowdsec/docker-compose.yml`
+
+```yaml
+services:
+  crowdsec:
+    image: crowdsecurity/crowdsec:latest
+    container_name: crowdsec
+    restart: unless-stopped
+    environment:
+      - COLLECTIONS=crowdsecurity/sshd crowdsecurity/nginx-proxy-manager
+    volumes:
+      - ./config:/etc/crowdsec
+      - ./data:/var/lib/crowdsec/data
+      - /var/log:/var/log:ro
+      - /opt/npm/data/logs:/opt/npm/data/logs:ro
+```
+
+CrowdSec-Acquisition — `/opt/crowdsec/config/acquis.yaml`:
+
+```yaml
+---
+filenames:
+  - /var/log/auth.log
+labels:
+  type: syslog
+---
+filenames:
+  - /opt/npm/data/logs/*.log
+labels:
+  type: nginx
+```
+
 ---
 
 # Reverse Proxy
