@@ -792,6 +792,32 @@ sudo ./install-vps.sh --with-reverse-proxy
 
 Erst-Login im Nginx Proxy Manager: `admin@example.com` / `changeme` — bitte sofort ändern.
 
+## Compose-Datei (Reverse Proxy)
+
+### Nginx Proxy Manager — `/opt/npm/docker-compose.yml`
+
+```yaml
+services:
+  npm:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: npm
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "81:81"
+    volumes:
+      - ./data:/data
+      - ./letsencrypt:/etc/letsencrypt
+```
+
+Manuelles Ausrollen (statt über den Installer):
+
+```bash
+cd /opt/npm
+sudo docker compose up -d
+```
+
 Beide Stacks lassen sich kombinieren:
 
 ```bash
