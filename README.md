@@ -753,15 +753,24 @@ networks:
 
 **Erster Zugriff / Zugangsdaten Statping-NG:**
 
-Statping-NG hat keine festen Standard-Zugangsdaten. Beim ersten Aufruf der
-URL erscheint ein Setup-Assistent unter `/setup`:
+Statping-NG initialisiert beim ersten Container-Start automatisch eine
+Datenbank mit folgenden Standard-Zugangsdaten:
 
-1. Datenbanktyp wählen (SQLite = Standard, keine weitere Konfiguration nötig)
-2. Seiten-Name, Beschreibung und Sprache festlegen
-3. **Admin-Benutzername und Passwort selbst wählen** — diese gelten ab sofort
+| Benutzername | Passwort |
+|---|---|
+| `admin` | `admin` |
 
-→ Den Setup-Assistenten sofort nach dem ersten Start durchlaufen, bevor
-die Domain öffentlich erreichbar ist.
+> ⚠️ **Sofort ändern** — unter *Settings → User* nach dem ersten Login.
+
+Falls der Setup-Assistent (`/setup`) direkt zur Hauptseite weiterleitet,
+ist die Datenbank bereits initialisiert. Mit den obigen Credentials einloggen
+und das Passwort umgehend ändern. Für einen sauberen Neustart (Setup-Assistent
+von vorn):
+```bash
+cd /opt/statping-ng && docker compose down
+rm -f /opt/statping-ng/app/statping.db
+docker compose up -d
+```
 
 ### Uptime Kuma — `/opt/uptime-kuma/docker-compose.yml` (`--uptime-tool kuma`)
 
