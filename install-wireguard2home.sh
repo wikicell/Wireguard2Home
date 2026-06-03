@@ -1276,7 +1276,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      - "81:81"
+      - "127.0.0.1:81:81"
     volumes:
       - ./data:/data
       - ./letsencrypt:/etc/letsencrypt
@@ -1297,7 +1297,7 @@ services:
     container_name: uptime-kuma
     restart: unless-stopped
     ports:
-      - "3001:3001"
+      - "127.0.0.1:3001:3001"
     volumes:
       - ./data:/app/data
 ____UPTIME_COMPOSE____
@@ -1321,7 +1321,7 @@ services:
     container_name: statping-ng
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./app:/app
     environment:

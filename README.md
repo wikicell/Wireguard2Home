@@ -729,7 +729,7 @@ services:
     container_name: statping-ng
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./app:/app
     environment:
@@ -738,8 +738,13 @@ services:
       - DESCRIPTION=Dienst-Ueberwachung
 ```
 
-**Setup:** Beim ersten Aufruf von `http://<VPS-IP>:8080` erscheint der Einrichtungsassistent.
-Für HTTPS in NPM (Port 81) einen neuen Proxy Host anlegen: `localhost:8080`.
+> **Sicherheit:** Port `8080` ist auf `127.0.0.1` gebunden — nur NPM (auf
+> demselben Host) kann darauf zugreifen. Kein Direktzugriff aus dem Internet.
+> Docker umgeht UFW via iptables direkt; `127.0.0.1`-Binding ist die einzig
+> zuverlässige Absicherung.
+
+**Setup:** NPM als HTTPS-Proxy konfigurieren (Port 81, per SSH-Tunnel erreichbar):
+Proxy Host anlegen → Forward Hostname `localhost`, Port `8080`, SSL/Let's Encrypt aktivieren.
 
 ### Uptime Kuma — `/opt/uptime-kuma/docker-compose.yml` (`--uptime-tool kuma`)
 
@@ -752,10 +757,13 @@ services:
     container_name: uptime-kuma
     restart: unless-stopped
     ports:
-      - "3001:3001"
+      - "127.0.0.1:3001:3001"
     volumes:
       - ./data:/app/data
 ```
+
+> **Sicherheit:** Port `3001` auf `127.0.0.1` — Zugriff nur via NPM-Proxy oder
+> SSH-Tunnel: `ssh -L 3001:localhost:3001 root@VPS_IP -N`
 
 ### Watchtower — `/opt/watchtower/docker-compose.yml`
 
@@ -851,11 +859,21 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      - "81:81"
+      - "127.0.0.1:81:81"
     volumes:
       - ./data:/data
       - ./letsencrypt:/etc/letsencrypt
 ```
+
+> **Sicherheit:** Port `81` (Admin-Panel) ist auf `127.0.0.1` gebunden — nicht
+> direkt aus dem Internet erreichbar. Docker umgeht UFW-Regeln via iptables;
+> ein `127.0.0.1`-Binding ist die einzig zuverlässige Absicherung.
+>
+> **Zugriff auf das Admin-Panel** per SSH-Tunnel vom lokalen Rechner:
+> ```bash
+> ssh -L 8181:localhost:81 root@VPS_IP -N
+> ```
+> Dann im Browser: `http://localhost:8181`
 
 Manuelles Ausrollen (statt über den Installer):
 
