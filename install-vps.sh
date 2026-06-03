@@ -63,7 +63,7 @@ PRE_RESTORE_DIR="${WIREGUARD2HOME_PRE_RESTORE_ROOT:-${SERVICE_HOME}/pre-restore-
 NPM_DIR="/opt/npm"
 WATCHTOWER_DIR="/opt/watchtower"
 UPTIME_DIR="/opt/uptime-kuma"
-STATPING_DIR="/opt/statping"
+STATPING_DIR="/opt/statping-ng"
 CROWDSEC_DIR="/opt/crowdsec"
 PROXY_NETWORK="gate2home_proxy"
 

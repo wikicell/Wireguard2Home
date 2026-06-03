@@ -715,11 +715,10 @@ du sie manuell prüfen, anpassen oder ohne den Installer ausrollen möchtest.
 Das Verfügbarkeits-Monitoring wird je nach `--uptime-tool` als **eine** der
 beiden folgenden Varianten ausgerollt.
 
-### Statping-NG — `/opt/statping/docker-compose.yml` (Standard)
+### Statping-NG — `/opt/statping-ng/docker-compose.yml` (Standard)
 
 Öffentliche Status-Seiten (ähnlich wie statuspage.io), konfigurierbare Services,
-optionaler HTTPS-Zugang über NPM. Kein separater nginx-proxy nötig — NPM übernimmt
-SSL und Reverse Proxy. Das Image `statping/statping:dev` ist das aufgegebene
+HTTPS über NPM. Das Image `statping/statping:dev` ist das aufgegebene
 Original-Projekt; wir verwenden das aktiv gewartete Fork-Image.
 
 ```yaml
@@ -728,23 +727,29 @@ services:
     image: adamboutcher/statping-ng:latest
     container_name: statping-ng
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:8080:8080"
+    expose:
+      - "8080"
     volumes:
       - ./app:/app
     environment:
       - DB_CONN=sqlite
       - NAME=Gate2Home Status
       - DESCRIPTION=Dienst-Ueberwachung
+    networks:
+      - proxy_net
+
+networks:
+  proxy_net:
+    external: true
+    name: gate2home_proxy
 ```
 
-> **Sicherheit:** Port `8080` ist auf `127.0.0.1` gebunden — nur NPM (auf
-> demselben Host) kann darauf zugreifen. Kein Direktzugriff aus dem Internet.
-> Docker umgeht UFW via iptables direkt; `127.0.0.1`-Binding ist die einzig
-> zuverlässige Absicherung.
+> **Netzwerk:** Statping-NG ist über das gemeinsame Docker-Netzwerk
+> `gate2home_proxy` für NPM erreichbar. `expose` macht den Port nur
+> innerhalb des Netzwerks sichtbar — kein Host-Port-Binding, kein
+> Direktzugriff aus dem Internet möglich.
 
-**Setup:** NPM als HTTPS-Proxy konfigurieren (Port 81, per SSH-Tunnel erreichbar):
-Proxy Host anlegen → Forward Hostname `localhost`, Port `8080`, SSL/Let's Encrypt aktivieren.
+**In NPM:** Forward Hostname `statping-ng` (Container-Name), Port `8080`.
 
 ### Uptime Kuma — `/opt/uptime-kuma/docker-compose.yml` (`--uptime-tool kuma`)
 
@@ -756,14 +761,20 @@ services:
     image: louislam/uptime-kuma:1
     container_name: uptime-kuma
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:3001:3001"
+    expose:
+      - "3001"
     volumes:
       - ./data:/app/data
+    networks:
+      - proxy_net
+
+networks:
+  proxy_net:
+    external: true
+    name: gate2home_proxy
 ```
 
-> **Sicherheit:** Port `3001` auf `127.0.0.1` — Zugriff nur via NPM-Proxy oder
-> SSH-Tunnel: `ssh -L 3001:localhost:3001 root@VPS_IP -N`
+> **In NPM:** Forward Hostname `uptime-kuma`, Port `3001`.
 
 ### Watchtower — `/opt/watchtower/docker-compose.yml`
 
@@ -860,28 +871,32 @@ services:
       - "80:80"
       - "443:443"
       - "127.0.0.1:81:81"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/data
       - ./letsencrypt:/etc/letsencrypt
+    networks:
+      - proxy_net
+
+networks:
+  proxy_net:
+    external: true
+    name: gate2home_proxy
 ```
 
-> **Warum `extra_hosts`?** NPM läuft in einem Docker-Container — dort zeigt
-> `127.0.0.1` auf den Container selbst, nicht auf den Host. `extra_hosts`
-> macht `host.docker.internal` als Alias für den Host verfügbar (Docker
-> 20.10+). In der NPM-UI wird Statping-NG deshalb als
-> `host.docker.internal:8080` eingetragen, nicht als `localhost:8080`.
+> **Sicherheit:** Port `81` (Admin-Panel) ist auf `127.0.0.1` gebunden —
+> nicht aus dem Internet erreichbar. Docker umgeht UFW via iptables;
+> `127.0.0.1`-Binding ist die einzig zuverlässige Absicherung.
+> Ports `80`/`443` bleiben öffentlich (für eingehenden HTTP/HTTPS-Traffic).
 
-> **Sicherheit:** Port `81` (Admin-Panel) ist auf `127.0.0.1` gebunden — nicht
-> direkt aus dem Internet erreichbar. Docker umgeht UFW-Regeln via iptables;
-> ein `127.0.0.1`-Binding ist die einzig zuverlässige Absicherung.
+> **Netzwerk:** NPM und alle Backend-Dienste (Statping-NG, Uptime Kuma)
+> teilen das externe Netzwerk `gate2home_proxy`. Das Netzwerk wird beim
+> ersten Installer-Lauf automatisch angelegt (`docker network create gate2home_proxy`).
 
-**Zugriff auf das Admin-Panel** per SSH-Tunnel vom lokalen Rechner:
+**Zugriff auf das Admin-Panel** per SSH-Tunnel:
 ```bash
 ssh -L 8181:localhost:81 root@VPS_IP -N
 ```
-Dann im Browser: `http://localhost:8181`
+→ `http://localhost:8181` im Browser
 
 **Statping-NG über NPM erreichbar machen (Schritt für Schritt):**
 
@@ -892,7 +907,7 @@ Voraussetzung: Eine (Sub-)Domain zeigt per DNS-A-Record auf die öffentliche VPS
 3. Erst-Login: `admin@example.com` / `changeme` → sofort ändern
 4. *Proxy Hosts* → *Add Proxy Host*:
    - **Domain Names:** `status.deinedomain.de`
-   - **Forward Hostname:** `host.docker.internal`
+   - **Forward Hostname:** `statping-ng` ← Container-Name im Docker-Netzwerk
    - **Forward Port:** `8080`
    - **Scheme:** `http`
 5. Tab *SSL* → *Request a new SSL Certificate* → Let's Encrypt aktivieren
