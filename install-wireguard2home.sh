@@ -481,7 +481,6 @@ PRE_RESTORE_DIR="${WIREGUARD2HOME_PRE_RESTORE_ROOT:-${SERVICE_HOME}/pre-restore-
 NPM_DIR="/opt/npm"
 WATCHTOWER_DIR="/opt/watchtower"
 UPTIME_DIR="/opt/uptime-kuma"
-STATPING_DIR="/opt/statping-ng"
 CROWDSEC_DIR="/opt/crowdsec"
 PROXY_NETWORK="gate2home_proxy"
 
@@ -501,7 +500,6 @@ ENABLE_DOCKER=0
 ENABLE_MONITORING=0
 ENABLE_REVERSE_PROXY=0
 ENABLE_CROWDSEC_BOUNCER=0
-UPTIME_TOOL="${WIREGUARD2HOME_UPTIME_TOOL:-statping}"
 ENABLE_SWAP=0
 SWAP_SIZE_MB="${WIREGUARD2HOME_SWAP_SIZE_MB:-1024}"
 SWAP_FILE="${WIREGUARD2HOME_SWAP_FILE:-/swapfile}"
@@ -542,8 +540,7 @@ Optionen:
   --with-ufw-fail2ban          Installiert zusaetzlich ufw und fail2ban (Host)
   --with-docker                Installiert zusaetzlich docker.io und docker-compose-plugin
   --with-reverse-proxy         Reverse-Proxy-Stack: Nginx Proxy Manager (impliziert --with-docker)
-  --with-monitoring            Monitoring-Stack: Uptime-Tool, Watchtower, CrowdSec (impliziert --with-docker)
-  --uptime-tool kuma|statping  Verfuegbarkeits-Monitoring: Uptime Kuma (Default) oder Statping-NG
+  --with-monitoring            Monitoring-Stack: Uptime Kuma, Watchtower, CrowdSec (impliziert --with-docker)
   --with-crowdsec-bouncer      Aktiviert zusaetzlich den CrowdSec Firewall-Bouncer
                                (standardmaessig AUS, um SSH-Aussperren zu vermeiden)
   --pushover-token TOKEN       Pushover API-Token fuer Benachrichtigungen (optional)
@@ -708,13 +705,6 @@ parse_args() {
         ENABLE_DOCKER=1
         shift
         ;;
-      --uptime-tool)
-        case "$2" in
-          kuma|statping) UPTIME_TOOL="$2" ;;
-          *) echo "Fehler: --uptime-tool erwartet 'kuma' oder 'statping'."; exit 1 ;;
-        esac
-        shift 2
-        ;;
       --with-crowdsec-bouncer)
         ENABLE_CROWDSEC_BOUNCER=1
         shift
@@ -792,18 +782,6 @@ prompt_runtime_defaults() {
   fi
 
   if [ "$ENABLE_MONITORING" -eq 1 ] && [ -t 0 ]; then
-    echo ""
-    echo "Verfuegbarkeits-Monitoring auswaehlen:"
-    echo "  1) Statping-NG  (oeffentliche Status-Seiten, ~90 MB RAM, Port 8080)  [Standard]"
-    echo "  2) Uptime Kuma  (internes Monitoring, ~120 MB RAM, Port 3001)"
-    read -r -p "Auswahl [${UPTIME_TOOL}]: " UPTIME_TOOL_CHOICE
-    case "${UPTIME_TOOL_CHOICE:-}" in
-      1|statping) UPTIME_TOOL="statping" ;;
-      2|kuma)     UPTIME_TOOL="kuma" ;;
-      "")         : ;;  # Default beibehalten
-      *)          echo "Ungueltige Auswahl – behalte '${UPTIME_TOOL}'." ;;
-    esac
-
     echo ""
     echo "Pushover-Benachrichtigungen (optional, leer lassen zum Ueberspringen)."
     if [ -z "$PUSHOVER_TOKEN" ]; then
@@ -1214,13 +1192,8 @@ print_summary() {
       echo "    Daten:      ${NPM_DIR}"
     fi
     if [ "$ENABLE_MONITORING" -eq 1 ]; then
-      if [ "$UPTIME_TOOL" = "statping" ]; then
-        echo "  Statping-NG:         http://${host_ip}:8080 (Setup beim ersten Aufruf)"
-        echo "    Daten:             ${STATPING_DIR}"
-      else
-        echo "  Uptime Kuma:         http://${host_ip}:3001 (Admin beim ersten Aufruf anlegen)"
-        echo "    Daten:             ${UPTIME_DIR}"
-      fi
+      echo "  Uptime Kuma:         http://${host_ip}:3001 (Admin beim ersten Aufruf anlegen)"
+      echo "    Daten:             ${UPTIME_DIR}"
       echo "  Watchtower:          aktiv (${WATCHTOWER_DIR})"
       echo "  CrowdSec:            aktiv (${CROWDSEC_DIR})"
       if [ -n "$PUSHOVER_TOKEN" ] && [ -n "$PUSHOVER_USER" ]; then
@@ -1231,9 +1204,7 @@ print_summary() {
     fi
     echo ""
     echo "Ressourcen: $(detect_total_ram_mb) MB RAM, $(detect_total_swap_mb) MB Swap"
-    local _uptime_port="3001"
-    [ "$UPTIME_TOOL" = "statping" ] && _uptime_port="8080"
-    echo "WICHTIG: Firewall/Ports 80, 443, 81, ${_uptime_port} am VPS ggf. freigeben."
+    echo "WICHTIG: Firewall/Ports 80, 443, 81, 3001 am VPS ggf. freigeben."
     echo ""
   fi
 }
@@ -1328,53 +1299,13 @@ ____UPTIME_COMPOSE____
   compose_up "$UPTIME_DIR" || log "Hinweis: Uptime-Kuma-Stack konnte nicht gestartet werden."
 }
 
-deploy_statping() {
-  log "Richte Statping-NG ein..."
-  ensure_dir "$STATPING_DIR" 700
-  ensure_dir "${STATPING_DIR}/app" 700
-
-  # Wir verwenden das offizielle Statping-NG-Image (adamboutcher/statping-ng).
-  # Das Image aus dem alten Projekt (statping/statping:dev) ist aufgegeben.
-  # SSL und Reverse Proxy werden von Nginx Proxy Manager (NPM) uebernommen –
-  # keine separaten nginx-proxy/letsencrypt-Companion-Container noetig.
-  cat > "${STATPING_DIR}/docker-compose.yml" <<'____STATPING_COMPOSE____'
-services:
-  statping:
-    image: adamboutcher/statping-ng:latest
-    container_name: statping-ng
-    restart: unless-stopped
-    expose:
-      - "8080"
-    volumes:
-      - ./app:/app
-    environment:
-      - DB_CONN=sqlite
-      - NAME=Gate2Home Status
-      - DESCRIPTION=Dienst-Ueberwachung
-    networks:
-      - proxy_net
-
-networks:
-  proxy_net:
-    external: true
-    name: gate2home_proxy
-____STATPING_COMPOSE____
-  chmod 600 "${STATPING_DIR}/docker-compose.yml"
-  log "Statping-NG: Admin-UI erreichbar unter http://<VPS-IP>:8080 (NPM fuer HTTPS konfigurieren)"
-  compose_up "$STATPING_DIR" || log "Hinweis: Statping-NG-Stack konnte nicht gestartet werden."
-}
-
 deploy_monitoring() {
-  log "Richte Monitoring-Stack ein (Uptime-Tool: ${UPTIME_TOOL}, Watchtower, CrowdSec)..."
+  log "Richte Monitoring-Stack ein (Uptime Kuma, Watchtower, CrowdSec)..."
   ensure_docker
   ensure_proxy_network
 
-  # --- Verfuegbarkeits-Monitoring (Uptime Kuma ODER Statping-NG) ---
-  if [ "$UPTIME_TOOL" = "statping" ]; then
-    deploy_statping
-  else
-    deploy_uptime_kuma
-  fi
+  # --- Uptime Kuma ---
+  deploy_uptime_kuma
 
   # --- Watchtower (mit optionalen Pushover-Notifications) ---
   ensure_dir "$WATCHTOWER_DIR" 700
@@ -1463,7 +1394,6 @@ main() {
   ensure_dir "$NPM_DIR" 700
   ensure_dir "$WATCHTOWER_DIR" 700
   ensure_dir "$UPTIME_DIR" 700
-  ensure_dir "$STATPING_DIR" 700
   ensure_dir "$CROWDSEC_DIR" 700
   ensure_dir "$(dirname "$TARGET_SCRIPT")" 700
 
