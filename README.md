@@ -272,7 +272,7 @@ Tasten:
 
 ```text
 README.md
-install-wireguard2home.sh     ← Self-contained Bootstrap (6000+ Zeilen, beinhaltet alle Sub-Scripts)
+install-wireguard2home.sh     ← Self-contained Bootstrap (7000+ Zeilen, beinhaltet alle Sub-Scripts)
 install-vps.sh                ← VPS-Installer (eigenständig und im Bootstrap eingebettet)
 install-gateway-host.sh       ← Gateway-Host-Installer (eigenständig und im Bootstrap eingebettet)
 Wireguard2Home.sh             ← Zentrale CLI für den VPS-Betrieb
@@ -417,6 +417,18 @@ sudo ./install-gateway-host.sh \
   Home des Service-Users auf dem VPS.
 * `--remote-install-dir PFAD`
   Zielverzeichnis für Scripts auf dem VPS.
+* `--update`
+  Aktualisiert nur die Runtime-Skripte (`Wireguard2Home.sh`, Dashboard, Client-Manager etc.)
+  auf dem lokalen Host — ohne WireGuard-Konfiguration oder Keys anzufassen.
+  Mit `--role gateway --vps-host USER@HOST` wird der VPS gleichzeitig per SSH aktualisiert.
+
+```bash
+# Nur lokalen VPS aktualisieren
+sudo ./install-wireguard2home.sh --update
+
+# VPS und Gateway-Host gleichzeitig
+sudo ./install-wireguard2home.sh --update --role gateway --vps-host root@DEIN_VPS
+```
 
 ---
 
@@ -458,7 +470,7 @@ sudo ./install-vps.sh --with-ufw-fail2ban --with-docker
 * `--with-docker` — installiert Docker und Compose-Plugin
 * `--with-reverse-proxy` — Reverse-Proxy-Stack (Nginx Proxy Manager); impliziert `--with-docker`
 * `--with-monitoring` — Monitoring-Stack (Uptime-Tool, Watchtower, CrowdSec); impliziert `--with-docker`
-* `--uptime-tool statping|kuma` — Verfügbarkeits-Monitoring: Statping-NG (Standard) oder Uptime Kuma (interaktiv abgefragt)
+* `--uptime-tool kuma|statping` — Verfügbarkeits-Monitoring: Statping-NG (Standard) oder Uptime Kuma
 * `--with-crowdsec-bouncer` — aktiviert zusätzlich den CrowdSec Firewall-Bouncer (Standard: aus)
 * `--pushover-token` / `--pushover-user` — Pushover-Zugang für Watchtower-Benachrichtigungen (optional, interaktiv abgefragt)
 * `--with-swap` — richtet eine Swap-Datei ein (Standard: 1024 MB unter `/swapfile`); empfohlen bei wenig RAM zusammen mit `--with-monitoring`
@@ -541,11 +553,12 @@ sudo cat /etc/wireguard/raspberry_public.key
 ## Reihenfolge einer frischen Installation
 
 1. VPS: `install-wireguard2home.sh --role vps` ausführen.
-2. VPS Public Key und Backup Public Key notieren (vom Installer ausgegeben).
+2. VPS Public Key und Backup Public Key werden vom Installer ausgegeben und automatisch weitergegeben.
 3. Gateway-Host: `install-wireguard2home.sh --role gateway --vps-host root@VPS` ausführen.
    Oder manuell: `install-gateway-host.sh` mit beiden Keys ausführen.
-4. Den vom Gateway-Installer ausgegebenen Peer-Block in `/etc/wireguard/wg0.conf` auf dem VPS eintragen.
-5. Auf beiden Systemen `systemctl restart wg-quick@wg0` prüfen.
+4. ~~Den Peer-Block manuell eintragen~~ — der Bootstrap überträgt den Gateway-Peer-Block
+   automatisch per SCP auf den VPS und lädt WireGuard neu. Kein manueller Schritt nötig.
+5. Auf beiden Systemen `systemctl status wg-quick@wg0` und `wg show` prüfen.
 6. Auf dem VPS `/root/Wireguard2Home.sh` starten.
 
 ---
@@ -685,7 +698,7 @@ Optionaler Docker-Stack auf dem VPS, aktivierbar mit `--with-monitoring`:
 
 * Verfügbarkeits-Monitoring — wahlweise **Statping-NG** (Standard, Port `8080`,
   öffentliche Status-Seiten) oder **Uptime Kuma** (Port `3001`), auswählbar
-  interaktiv oder per `--uptime-tool statping|kuma`
+  interaktiv oder per `--uptime-tool kuma|statping`
 * Watchtower — automatische Container-Updates
 * CrowdSec — Angriffserkennung (SSH + Nginx Proxy Manager)
 * Pushover — Benachrichtigungen über Watchtower (Token/User interaktiv oder per `--pushover-token` / `--pushover-user`)
@@ -697,8 +710,8 @@ Beispiel:
 # Standard (Statping-NG)
 sudo ./install-vps.sh --with-monitoring
 
-# Mit Statping-NG statt Uptime Kuma
-sudo ./install-vps.sh --with-monitoring --uptime-tool statping
+# Mit Uptime Kuma statt Statping-NG
+sudo ./install-vps.sh --with-monitoring --uptime-tool kuma
 ```
 
 Hinweise:
