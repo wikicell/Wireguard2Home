@@ -499,6 +499,10 @@ ENABLE_DOCKER=0
 ENABLE_MONITORING=0
 ENABLE_REVERSE_PROXY=0
 ENABLE_CROWDSEC_BOUNCER=0
+ENABLE_SWAP=0
+SWAP_SIZE_MB="${WIREGUARD2HOME_SWAP_SIZE_MB:-1024}"
+SWAP_FILE="${WIREGUARD2HOME_SWAP_FILE:-/swapfile}"
+MIN_MONITORING_RAM_MB=900
 PUSHOVER_TOKEN="${WIREGUARD2HOME_PUSHOVER_TOKEN:-}"
 PUSHOVER_USER="${WIREGUARD2HOME_PUSHOVER_USER:-}"
 
@@ -540,6 +544,10 @@ Optionen:
                                (standardmaessig AUS, um SSH-Aussperren zu vermeiden)
   --pushover-token TOKEN       Pushover API-Token fuer Benachrichtigungen (optional)
   --pushover-user KEY          Pushover User-Key fuer Benachrichtigungen (optional)
+  --with-swap                  Richtet eine Swap-Datei ein (Default: ${SWAP_SIZE_MB} MB unter ${SWAP_FILE})
+                               Empfohlen bei wenig RAM (z. B. 0.5 GB) zusammen mit --with-monitoring
+  --swap-size-mb N             Groesse der Swap-Datei in MB (Default: ${SWAP_SIZE_MB})
+  --swap-file PFAD             Pfad der Swap-Datei (Default: ${SWAP_FILE})
   --help                       Diese Hilfe anzeigen
 EOF
 }
@@ -708,6 +716,19 @@ parse_args() {
         PUSHOVER_USER="$2"
         shift 2
         ;;
+      --with-swap)
+        ENABLE_SWAP=1
+        shift
+        ;;
+      --swap-size-mb)
+        SWAP_SIZE_MB="$2"
+        ENABLE_SWAP=1
+        shift 2
+        ;;
+      --swap-file)
+        SWAP_FILE="$2"
+        shift 2
+        ;;
       --with-docker)
         ENABLE_DOCKER=1
         shift
@@ -774,6 +795,114 @@ prompt_runtime_defaults() {
         PUSHOVER_USER="$PUSHOVER_USER_INPUT"
       fi
     fi
+  fi
+}
+
+detect_total_ram_mb() {
+  # Gesamter physischer RAM in MB (ohne Swap)
+  local kb
+  kb="$(awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)"
+  echo $(( kb / 1024 ))
+}
+
+detect_total_swap_mb() {
+  local kb
+  kb="$(awk '/^SwapTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)"
+  echo $(( kb / 1024 ))
+}
+
+setup_swap() {
+  local size_mb="$SWAP_SIZE_MB"
+  local file="$SWAP_FILE"
+
+  local existing_swap
+  existing_swap="$(detect_total_swap_mb)"
+  if [ "$existing_swap" -gt 0 ]; then
+    log "Swap bereits aktiv (${existing_swap} MB). Ueberspringe Swap-Einrichtung."
+    return 0
+  fi
+
+  if [ -e "$file" ] && swapon --show=NAME --noheadings 2>/dev/null | grep -qx "$file"; then
+    log "Swap-Datei ${file} ist bereits eingebunden."
+    return 0
+  fi
+
+  log "Richte Swap-Datei ein: ${file} (${size_mb} MB) ..."
+
+  if command -v fallocate >/dev/null 2>&1; then
+    fallocate -l "${size_mb}M" "$file" 2>/dev/null \
+      || dd if=/dev/zero of="$file" bs=1M count="$size_mb" status=none
+  else
+    dd if=/dev/zero of="$file" bs=1M count="$size_mb" status=none
+  fi
+
+  chmod 600 "$file"
+  mkswap "$file" >/dev/null 2>&1 || { log "Fehler: mkswap auf ${file} fehlgeschlagen."; rm -f "$file"; return 1; }
+  swapon "$file" || { log "Fehler: swapon auf ${file} fehlgeschlagen."; return 1; }
+
+  if ! grep -qE "^[^#]*[[:space:]]${file}[[:space:]]+none[[:space:]]+swap" /etc/fstab 2>/dev/null \
+     && ! grep -qE "^${file}[[:space:]]" /etc/fstab 2>/dev/null; then
+    printf '%s none swap sw 0 0\n' "$file" >> /etc/fstab
+    log "Swap dauerhaft in /etc/fstab eingetragen."
+  fi
+
+  # Etwas konservativere Swap-Nutzung bei wenig RAM
+  if [ ! -f /etc/sysctl.d/99-wireguard2home-swap.conf ]; then
+    printf 'vm.swappiness=10\n' > /etc/sysctl.d/99-wireguard2home-swap.conf
+    sysctl -p /etc/sysctl.d/99-wireguard2home-swap.conf >/dev/null 2>&1 || true
+  fi
+
+  log "Swap aktiv: $(detect_total_swap_mb) MB."
+}
+
+check_monitoring_resources() {
+  # Warnt, wenn fuer den Monitoring-Stack zu wenig RAM vorhanden ist.
+  if [ "$ENABLE_MONITORING" -ne 1 ]; then
+    return 0
+  fi
+
+  local ram_mb swap_mb
+  ram_mb="$(detect_total_ram_mb)"
+  swap_mb="$(detect_total_swap_mb)"
+
+  if [ "$ram_mb" -ge "$MIN_MONITORING_RAM_MB" ]; then
+    return 0
+  fi
+
+  echo ""
+  echo "============================================================"
+  echo "WARNUNG: Wenig Arbeitsspeicher fuer den Monitoring-Stack"
+  echo "============================================================"
+  echo "Erkannt:    ${ram_mb} MB RAM, ${swap_mb} MB Swap"
+  echo "Empfohlen:  mindestens ${MIN_MONITORING_RAM_MB} MB RAM fuer"
+  echo "            Tunnel + Reverse-Proxy + Monitoring."
+  echo ""
+  echo "Der Monitoring-Stack (Uptime Kuma, Watchtower, CrowdSec) belegt"
+  echo "zusammen mit Docker und Nginx Proxy Manager grob 600-700 MB."
+  echo "Ohne genuegend RAM/Swap koennen Container vom OOM-Killer beendet"
+  echo "werden."
+  echo ""
+  if [ "$ENABLE_SWAP" -eq 1 ]; then
+    echo "Hinweis: --with-swap ist aktiv – es wird eine Swap-Datei eingerichtet,"
+    echo "die das RAM-Limit abfedert (aber langsamer als echter RAM ist)."
+    echo "============================================================"
+    echo ""
+    return 0
+  fi
+
+  echo "Empfehlung: Mit --with-swap erneut starten (richtet ${SWAP_SIZE_MB} MB"
+  echo "Swap ein) oder den VPS auf >= 1 GB RAM upgraden."
+  echo "============================================================"
+  echo ""
+
+  if [ -t 0 ]; then
+    read -r -p "Trotzdem ohne zusaetzlichen Swap fortfahren? [j/N]: " _ram_ans
+    case "${_ram_ans:-N}" in
+      [jJyY]) : ;;
+      *) echo "Abgebrochen. Tipp: erneut mit --with-swap ausfuehren."; exit 1 ;;
+    esac
+  else
+    log "Nicht-interaktiv: fahre trotz wenig RAM fort (erwaege --with-swap)."
   fi
 }
 
@@ -1072,6 +1201,7 @@ print_summary() {
       fi
     fi
     echo ""
+    echo "Ressourcen: $(detect_total_ram_mb) MB RAM, $(detect_total_swap_mb) MB Swap"
     echo "WICHTIG: Firewall/Ports 80, 443, 81, 3001 am VPS ggf. freigeben."
     echo ""
   fi
@@ -1217,6 +1347,12 @@ main() {
   require_root
   require_apt
   prompt_runtime_defaults
+
+  # Ressourcen-Pruefung + optionaler Swap, bevor der schwere Stack startet
+  check_monitoring_resources
+  if [ "$ENABLE_SWAP" -eq 1 ]; then
+    setup_swap || log "Hinweis: Swap-Einrichtung fehlgeschlagen – fahre fort."
+  fi
 
   install_packages
 
