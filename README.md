@@ -860,20 +860,43 @@ services:
       - "80:80"
       - "443:443"
       - "127.0.0.1:81:81"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/data
       - ./letsencrypt:/etc/letsencrypt
 ```
 
+> **Warum `extra_hosts`?** NPM läuft in einem Docker-Container — dort zeigt
+> `127.0.0.1` auf den Container selbst, nicht auf den Host. `extra_hosts`
+> macht `host.docker.internal` als Alias für den Host verfügbar (Docker
+> 20.10+). In der NPM-UI wird Statping-NG deshalb als
+> `host.docker.internal:8080` eingetragen, nicht als `localhost:8080`.
+
 > **Sicherheit:** Port `81` (Admin-Panel) ist auf `127.0.0.1` gebunden — nicht
 > direkt aus dem Internet erreichbar. Docker umgeht UFW-Regeln via iptables;
 > ein `127.0.0.1`-Binding ist die einzig zuverlässige Absicherung.
->
-> **Zugriff auf das Admin-Panel** per SSH-Tunnel vom lokalen Rechner:
-> ```bash
-> ssh -L 8181:localhost:81 root@VPS_IP -N
-> ```
-> Dann im Browser: `http://localhost:8181`
+
+**Zugriff auf das Admin-Panel** per SSH-Tunnel vom lokalen Rechner:
+```bash
+ssh -L 8181:localhost:81 root@VPS_IP -N
+```
+Dann im Browser: `http://localhost:8181`
+
+**Statping-NG über NPM erreichbar machen (Schritt für Schritt):**
+
+Voraussetzung: Eine (Sub-)Domain zeigt per DNS-A-Record auf die öffentliche VPS-IP.
+
+1. SSH-Tunnel öffnen: `ssh -L 8181:localhost:81 root@VPS_IP -N`
+2. NPM Admin öffnen: `http://localhost:8181`
+3. Erst-Login: `admin@example.com` / `changeme` → sofort ändern
+4. *Proxy Hosts* → *Add Proxy Host*:
+   - **Domain Names:** `status.deinedomain.de`
+   - **Forward Hostname:** `host.docker.internal`
+   - **Forward Port:** `8080`
+   - **Scheme:** `http`
+5. Tab *SSL* → *Request a new SSL Certificate* → Let's Encrypt aktivieren
+6. Speichern → Statping-NG ist unter `https://status.deinedomain.de` erreichbar
 
 Manuelles Ausrollen (statt über den Installer):
 
