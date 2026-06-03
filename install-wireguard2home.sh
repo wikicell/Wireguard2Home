@@ -500,7 +500,7 @@ ENABLE_DOCKER=0
 ENABLE_MONITORING=0
 ENABLE_REVERSE_PROXY=0
 ENABLE_CROWDSEC_BOUNCER=0
-UPTIME_TOOL="${WIREGUARD2HOME_UPTIME_TOOL:-kuma}"
+UPTIME_TOOL="${WIREGUARD2HOME_UPTIME_TOOL:-statping}"
 ENABLE_SWAP=0
 SWAP_SIZE_MB="${WIREGUARD2HOME_SWAP_SIZE_MB:-1024}"
 SWAP_FILE="${WIREGUARD2HOME_SWAP_FILE:-/swapfile}"
@@ -793,12 +793,12 @@ prompt_runtime_defaults() {
   if [ "$ENABLE_MONITORING" -eq 1 ] && [ -t 0 ]; then
     echo ""
     echo "Verfuegbarkeits-Monitoring auswaehlen:"
-    echo "  1) Uptime Kuma  (schlank, ~120 MB RAM, Port 3001)"
-    echo "  2) Statping-NG  (Status-Seiten, Port 8080)"
+    echo "  1) Statping-NG  (oeffentliche Status-Seiten, ~90 MB RAM, Port 8080)  [Standard]"
+    echo "  2) Uptime Kuma  (internes Monitoring, ~120 MB RAM, Port 3001)"
     read -r -p "Auswahl [${UPTIME_TOOL}]: " UPTIME_TOOL_CHOICE
     case "${UPTIME_TOOL_CHOICE:-}" in
-      1|kuma)     UPTIME_TOOL="kuma" ;;
-      2|statping) UPTIME_TOOL="statping" ;;
+      1|statping) UPTIME_TOOL="statping" ;;
+      2|kuma)     UPTIME_TOOL="kuma" ;;
       "")         : ;;  # Default beibehalten
       *)          echo "Ungueltige Auswahl – behalte '${UPTIME_TOOL}'." ;;
     esac
@@ -1308,7 +1308,12 @@ ____UPTIME_COMPOSE____
 deploy_statping() {
   log "Richte Statping-NG ein..."
   ensure_dir "$STATPING_DIR" 700
-  ensure_dir "${STATPING_DIR}/data" 700
+  ensure_dir "${STATPING_DIR}/app" 700
+
+  # Wir verwenden das offizielle Statping-NG-Image (adamboutcher/statping-ng).
+  # Das Image aus dem alten Projekt (statping/statping:dev) ist aufgegeben.
+  # SSL und Reverse Proxy werden von Nginx Proxy Manager (NPM) uebernommen –
+  # keine separaten nginx-proxy/letsencrypt-Companion-Container noetig.
   cat > "${STATPING_DIR}/docker-compose.yml" <<'____STATPING_COMPOSE____'
 services:
   statping:
@@ -1318,11 +1323,14 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./data:/app
+      - ./app:/app
     environment:
       - DB_CONN=sqlite
+      - NAME=Gate2Home Status
+      - DESCRIPTION=Dienst-Ueberwachung
 ____STATPING_COMPOSE____
   chmod 600 "${STATPING_DIR}/docker-compose.yml"
+  log "Statping-NG: Admin-UI erreichbar unter http://<VPS-IP>:8080 (NPM fuer HTTPS konfigurieren)"
   compose_up "$STATPING_DIR" || log "Hinweis: Statping-NG-Stack konnte nicht gestartet werden."
 }
 

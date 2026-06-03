@@ -83,7 +83,7 @@ Funktionen:
 * CrowdSec
 * Fail2Ban
 * Watchtower
-* Uptime Kuma
+* Statping-NG
 * Tunnel Hub
 
 ---
@@ -458,7 +458,7 @@ sudo ./install-vps.sh --with-ufw-fail2ban --with-docker
 * `--with-docker` — installiert Docker und Compose-Plugin
 * `--with-reverse-proxy` — Reverse-Proxy-Stack (Nginx Proxy Manager); impliziert `--with-docker`
 * `--with-monitoring` — Monitoring-Stack (Uptime-Tool, Watchtower, CrowdSec); impliziert `--with-docker`
-* `--uptime-tool kuma|statping` — Verfügbarkeits-Monitoring: Uptime Kuma (Standard) oder Statping-NG (interaktiv abgefragt)
+* `--uptime-tool statping|kuma` — Verfügbarkeits-Monitoring: Statping-NG (Standard) oder Uptime Kuma (interaktiv abgefragt)
 * `--with-crowdsec-bouncer` — aktiviert zusätzlich den CrowdSec Firewall-Bouncer (Standard: aus)
 * `--pushover-token` / `--pushover-user` — Pushover-Zugang für Watchtower-Benachrichtigungen (optional, interaktiv abgefragt)
 * `--with-swap` — richtet eine Swap-Datei ein (Standard: 1024 MB unter `/swapfile`); empfohlen bei wenig RAM zusammen mit `--with-monitoring`
@@ -683,9 +683,9 @@ Das Setup ist reboot-sicher.
 
 Optionaler Docker-Stack auf dem VPS, aktivierbar mit `--with-monitoring`:
 
-* Verfügbarkeits-Monitoring — wahlweise **Uptime Kuma** (Standard, Port `3001`)
-  oder **Statping-NG** (Port `8080`), auswählbar interaktiv oder per
-  `--uptime-tool kuma|statping`
+* Verfügbarkeits-Monitoring — wahlweise **Statping-NG** (Standard, Port `8080`,
+  öffentliche Status-Seiten) oder **Uptime Kuma** (Port `3001`), auswählbar
+  interaktiv oder per `--uptime-tool statping|kuma`
 * Watchtower — automatische Container-Updates
 * CrowdSec — Angriffserkennung (SSH + Nginx Proxy Manager)
 * Pushover — Benachrichtigungen über Watchtower (Token/User interaktiv oder per `--pushover-token` / `--pushover-user`)
@@ -694,7 +694,7 @@ Optionaler Docker-Stack auf dem VPS, aktivierbar mit `--with-monitoring`:
 Beispiel:
 
 ```bash
-# Standard (Uptime Kuma)
+# Standard (Statping-NG)
 sudo ./install-vps.sh --with-monitoring
 
 # Mit Statping-NG statt Uptime Kuma
@@ -715,7 +715,35 @@ du sie manuell prüfen, anpassen oder ohne den Installer ausrollen möchtest.
 Das Verfügbarkeits-Monitoring wird je nach `--uptime-tool` als **eine** der
 beiden folgenden Varianten ausgerollt.
 
-### Uptime Kuma — `/opt/uptime-kuma/docker-compose.yml` (Standard)
+### Statping-NG — `/opt/statping/docker-compose.yml` (Standard)
+
+Öffentliche Status-Seiten (ähnlich wie statuspage.io), konfigurierbare Services,
+optionaler HTTPS-Zugang über NPM. Kein separater nginx-proxy nötig — NPM übernimmt
+SSL und Reverse Proxy. Das Image `statping/statping:dev` ist das aufgegebene
+Original-Projekt; wir verwenden das aktiv gewartete Fork-Image.
+
+```yaml
+services:
+  statping:
+    image: adamboutcher/statping-ng:latest
+    container_name: statping-ng
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./app:/app
+    environment:
+      - DB_CONN=sqlite
+      - NAME=Gate2Home Status
+      - DESCRIPTION=Dienst-Ueberwachung
+```
+
+**Setup:** Beim ersten Aufruf von `http://<VPS-IP>:8080` erscheint der Einrichtungsassistent.
+Für HTTPS in NPM (Port 81) einen neuen Proxy Host anlegen: `localhost:8080`.
+
+### Uptime Kuma — `/opt/uptime-kuma/docker-compose.yml` (`--uptime-tool kuma`)
+
+Intern orientiertes Monitoring ohne öffentliche Status-Seiten-Funktion.
 
 ```yaml
 services:
@@ -727,22 +755,6 @@ services:
       - "3001:3001"
     volumes:
       - ./data:/app/data
-```
-
-### Statping-NG — `/opt/statping-ng/docker-compose.yml` (`--uptime-tool statping`)
-
-```yaml
-services:
-  statping:
-    image: adamboutcher/statping-ng:latest
-    container_name: statping-ng
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./data:/app
-    environment:
-      - DB_CONN=sqlite
 ```
 
 ### Watchtower — `/opt/watchtower/docker-compose.yml`
@@ -883,7 +895,8 @@ Grober RAM-Bedarf des vollen Stacks im Leerlauf:
 | Ubuntu Base + systemd | ~150–200 MB |
 | Docker-Daemon | ~80 MB |
 | Nginx Proxy Manager | ~150 MB |
-| Uptime Kuma / Statping-NG | ~120–180 MB |
+| Statping-NG (Standard)    | ~90 MB |
+| Uptime Kuma (alternativ)  | ~120 MB |
 | CrowdSec | ~120 MB |
 | Watchtower | ~30 MB |
 | **Summe** | **~650–700 MB** |
