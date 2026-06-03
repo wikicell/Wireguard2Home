@@ -63,8 +63,9 @@ PRE_RESTORE_DIR="${WIREGUARD2HOME_PRE_RESTORE_ROOT:-${SERVICE_HOME}/pre-restore-
 NPM_DIR="/opt/npm"
 WATCHTOWER_DIR="/opt/watchtower"
 UPTIME_DIR="/opt/uptime-kuma"
-STATPING_DIR="/opt/statping-ng"
+STATPING_DIR="/opt/statping"
 CROWDSEC_DIR="/opt/crowdsec"
+PROXY_NETWORK="gate2home_proxy"
 
 BACKUP_SSH_KEY="${WIREGUARD2HOME_BACKUP_SSH_KEY:-${BACKUP_SSH_HOME}/.ssh/gate2home_backup}"
 BACKUP_SSH_COMMENT="wireguard2home-backup@$(hostname -s 2>/dev/null || hostname)"
@@ -842,9 +843,17 @@ write_pushover_env() {
   chmod 600 "$env_path"
 }
 
+ensure_proxy_network() {
+  if ! docker network inspect "$PROXY_NETWORK" >/dev/null 2>&1; then
+    log "Erstelle gemeinsames Docker-Netzwerk ${PROXY_NETWORK} ..."
+    docker network create "$PROXY_NETWORK"
+  fi
+}
+
 deploy_reverse_proxy() {
   log "Richte Reverse Proxy (Nginx Proxy Manager) ein..."
   ensure_docker
+  ensure_proxy_network
   ensure_dir "$NPM_DIR" 700
   ensure_dir "${NPM_DIR}/data" 700
   ensure_dir "${NPM_DIR}/letsencrypt" 700
@@ -859,11 +868,16 @@ services:
       - "80:80"
       - "443:443"
       - "127.0.0.1:81:81"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/data
       - ./letsencrypt:/etc/letsencrypt
+    networks:
+      - proxy_net
+
+networks:
+  proxy_net:
+    external: true
+    name: gate2home_proxy
 ____NPM_COMPOSE____
   chmod 600 "${NPM_DIR}/docker-compose.yml"
 
@@ -880,10 +894,17 @@ services:
     image: louislam/uptime-kuma:1
     container_name: uptime-kuma
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:3001:3001"
+    expose:
+      - "3001"
     volumes:
       - ./data:/app/data
+    networks:
+      - proxy_net
+
+networks:
+  proxy_net:
+    external: true
+    name: gate2home_proxy
 ____UPTIME_COMPOSE____
   chmod 600 "${UPTIME_DIR}/docker-compose.yml"
   compose_up "$UPTIME_DIR" || log "Hinweis: Uptime-Kuma-Stack konnte nicht gestartet werden."
@@ -904,14 +925,21 @@ services:
     image: adamboutcher/statping-ng:latest
     container_name: statping-ng
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:8080:8080"
+    expose:
+      - "8080"
     volumes:
       - ./app:/app
     environment:
       - DB_CONN=sqlite
       - NAME=Gate2Home Status
       - DESCRIPTION=Dienst-Ueberwachung
+    networks:
+      - proxy_net
+
+networks:
+  proxy_net:
+    external: true
+    name: gate2home_proxy
 ____STATPING_COMPOSE____
   chmod 600 "${STATPING_DIR}/docker-compose.yml"
   log "Statping-NG: Admin-UI erreichbar unter http://<VPS-IP>:8080 (NPM fuer HTTPS konfigurieren)"
@@ -921,6 +949,7 @@ ____STATPING_COMPOSE____
 deploy_monitoring() {
   log "Richte Monitoring-Stack ein (Uptime-Tool: ${UPTIME_TOOL}, Watchtower, CrowdSec)..."
   ensure_docker
+  ensure_proxy_network
 
   # --- Verfuegbarkeits-Monitoring (Uptime Kuma ODER Statping-NG) ---
   if [ "$UPTIME_TOOL" = "statping" ]; then
