@@ -31,6 +31,7 @@ Enthält einen vollständig eigenständigen Bootstrap-Installer mit eingebettete
 * [Reboot Verhalten](#reboot-verhalten)
 * [Monitoring Stack](#monitoring-stack)
 * [Reverse Proxy](#reverse-proxy)
+* [Hardware-Anforderungen](#hardware-anforderungen)
 * [Lizenz](#lizenz)
 * [Geplante Features](#geplante-features)
 * [Mögliche Erweiterungen](#mögliche-erweiterungen)
@@ -459,6 +460,13 @@ sudo ./install-vps.sh --with-ufw-fail2ban --with-docker
 * `--with-monitoring` — Monitoring-Stack (Uptime Kuma, Watchtower, CrowdSec); impliziert `--with-docker`
 * `--with-crowdsec-bouncer` — aktiviert zusätzlich den CrowdSec Firewall-Bouncer (Standard: aus)
 * `--pushover-token` / `--pushover-user` — Pushover-Zugang für Watchtower-Benachrichtigungen (optional, interaktiv abgefragt)
+* `--with-swap` — richtet eine Swap-Datei ein (Standard: 1024 MB unter `/swapfile`); empfohlen bei wenig RAM zusammen mit `--with-monitoring`
+* `--swap-size-mb N` — Größe der Swap-Datei in MB (Standard: 1024)
+* `--swap-file PFAD` — Pfad der Swap-Datei (Standard: `/swapfile`)
+
+Hinweis: Bei `--with-monitoring` prüft der Installer den verfügbaren RAM und
+warnt (bzw. fragt interaktiv nach), wenn weniger als ~900 MB erkannt werden.
+Details unter [Hardware-Anforderungen](#hardware-anforderungen).
 
 ### Keys auf dem VPS
 
@@ -823,6 +831,79 @@ Beide Stacks lassen sich kombinieren:
 ```bash
 sudo ./install-vps.sh --with-reverse-proxy --with-monitoring
 ```
+
+---
+
+# Hardware-Anforderungen
+
+WireGuard selbst ist ein Kernel-Modul und braucht praktisch kein RAM. Der reine
+Tunnel läuft daher auch auf sehr kleinen VPS problemlos. Der optionale
+Reverse-Proxy- und Monitoring-Stack läuft dagegen in Docker-Containern und
+braucht spürbar mehr Arbeitsspeicher.
+
+## VPS (Hub)
+
+| Szenario | vCores | RAM | Disk | Port |
+|---|---|---|---|---|
+| Nur Tunnel | 1 | 0.5 GB | 10 GB | beliebig |
+| Tunnel + Reverse Proxy | 1–2 | 1 GB | 10–20 GB | je nach Last |
+| Tunnel + Reverse Proxy + Monitoring | 2 | 2 GB | 20–40 GB | echte 1 Gbit/s |
+| Komfortabel Gigabit, voller Stack | 2–4 | 2 GB | 20–40 GB | echte 1 Gbit/s |
+
+Grober RAM-Bedarf des vollen Stacks im Leerlauf:
+
+| Komponente | RAM (typisch) |
+|---|---|
+| Ubuntu Base + systemd | ~150–200 MB |
+| Docker-Daemon | ~80 MB |
+| Nginx Proxy Manager | ~150 MB |
+| Uptime Kuma | ~120 MB |
+| CrowdSec | ~120 MB |
+| Watchtower | ~30 MB |
+| **Summe** | **~650–700 MB** |
+
+Auf einem 0.5-GB-VPS übersteigt das den physischen RAM — Container können vom
+OOM-Killer beendet werden. Abhilfe:
+
+* **Swap** als Notnagel: `--with-swap` (siehe unten). Federt das RAM-Limit ab,
+  ist aber langsamer als echter RAM.
+* **Upgrade** auf ≥ 1 GB (besser 2 GB) RAM — die saubere Lösung für den vollen Stack.
+* **Monitoring auslagern** auf den Gateway-Host (Raspberry), der den VPS durch
+  den Tunnel überwacht.
+
+## Gigabit ausreizen
+
+Entscheidend sind drei Dinge — RAM ist dabei *nicht* der Flaschenhals:
+
+1. **CPU:** WireGuard-Verschlüsselung ist CPU-gebunden. 1 vCore schafft je nach
+   CPU grob 400–900 Mbit/s. Für stabile, symmetrische Gigabit-Last (plus
+   Reverse-Proxy/TLS) sind **2+ vCores** mit AES-NI empfehlenswert.
+2. **Provider-Port:** Viele günstige VPS haben einen gedrosselten oder geteilten
+   Uplink (100–500 Mbit/s). Prüfe die zugesicherte **Anbindung/Port-Speed** —
+   sonst helfen auch viele Cores nichts.
+3. **Gesamte Kette:** Es zählt der langsamste Punkt aus VPS-Uplink,
+   Heimanschluss-Upload und CGNAT-Pfad.
+
+## Swap einrichten
+
+Bei wenig RAM richtet der Installer auf Wunsch eine Swap-Datei ein:
+
+```bash
+sudo ./install-vps.sh --with-reverse-proxy --with-monitoring --with-swap
+```
+
+Standardmäßig 1024 MB unter `/swapfile`, dauerhaft via `/etc/fstab`, mit
+`vm.swappiness=10`. Größe/Pfad anpassbar über `--swap-size-mb` und `--swap-file`.
+Bei aktivem `--with-monitoring` prüft der Installer den RAM und warnt vor zu
+wenig Arbeitsspeicher (interaktiv mit Rückfrage), sofern kein Swap angefordert
+wurde.
+
+## Gateway-Host
+
+Ein Raspberry Pi (oder vergleichbarer SBC) mit 1 GB RAM genügt für die
+Gateway-Rolle. Für Gigabit-Durchsatz über den Tunnel gilt auch hier: die CPU
+ist der begrenzende Faktor — ein Raspberry Pi 4/5 ist deutlich schneller als
+ältere Modelle.
 
 ---
 
