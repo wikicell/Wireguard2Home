@@ -8,141 +8,122 @@
 
 Eigenständiger WireGuard-VPN-Stack zum Überbrücken von CGNAT. Ein leichtgewichtiger VPS dient als Knotenpunkt; ein Gateway-Host (Raspberry Pi oder jeder andere Linux-Rechner) verbindet das gesamte Heimnetz verschlüsselt mit dem Tunnel — erreichbar von jedem Gerät, überall auf der Welt.
 
-Enthält einen vollständig eigenständigen Bootstrap-Installer mit eingebetteten Sub-Scripts (kein GitHub-Zugriff zur Laufzeit nötig), ein Live-Traffic-Dashboard mit RX/TX-Statistiken pro Client, einen vollständigen Client-Manager mit QR-Code-Export, automatisierte Offsite-Backups zum Gateway-Host sowie eine Ein-Befehl-Wiederherstellung. Unterstützt Full-Tunnel, Split-Tunnel und Heimnetz-DNS-Filter. Läuft auf Debian, Ubuntu, Fedora, Arch, openSUSE und Raspberry Pi OS.
-
 ---
 
 # Schnellnavigation
 
-* [Projektziel](#projektziel)
-* [Infrastruktur](#infrastruktur)
-* [WireGuard Netz](#wireguard-netz)
-* [Adressierung](#adressierung)
+* [Schnellstart](#schnellstart)
+* [Architektur](#architektur)
 * [Features](#features)
-* [Status Dashboard](#status-dashboard)
-* [Projektstruktur](#projektstruktur)
-* [Installer](#installer)
-* [Laufzeit-Konfiguration](#laufzeit-konfiguration)
-* [Starten](#starten)
-* [Menü](#menü)
-* [Sicherheit](#sicherheit)
-* [Backup Empfehlung](#backup-empfehlung)
-* [Restore](#restore)
-* [Reboot Verhalten](#reboot-verhalten)
+* [Installation](#installation)
+* [Betrieb](#betrieb)
 * [Monitoring Stack](#monitoring-stack)
 * [Reverse Proxy](#reverse-proxy)
+* [Backup & Restore](#backup--restore)
+* [Sicherheit](#sicherheit)
 * [Hardware-Anforderungen](#hardware-anforderungen)
+* [Fehlerbehebung](#fehlerbehebung)
+* [Roadmap](#roadmap)
 * [Lizenz](#lizenz)
-* [Geplante Features](#geplante-features)
-* [Mögliche Erweiterungen](#mögliche-erweiterungen)
 
 ---
 
-# Projektziel
+# Schnellstart
 
-Das Ziel dieses Projekts ist der Aufbau einer vollständig kontrollierten privaten Infrastruktur für:
+> Für eine frische Installation auf VPS und Gateway-Host — alle anderen Details folgen in den jeweiligen Abschnitten.
 
-* sicheren Heimnetz-Zugriff
-* CGNAT-Bypass
-* Remote-Zugriff
-* Reverse-Proxying
-* Selfhosting
-* VPN Infrastruktur
-* mobile Clients
-* Zero-Trust ähnliche Netzwerke
+**Schritt 1 — Bootstrap herunterladen (auf dem Zielhost):**
 
-Die Infrastruktur basiert auf:
+```bash
+curl -fsSL \
+  https://raw.githubusercontent.com/wikicell/Wireguard2Home/main/install-wireguard2home.sh \
+  -o install-wireguard2home.sh
+chmod +x install-wireguard2home.sh
+```
+
+**Schritt 2 — VPS einrichten:**
+
+```bash
+sudo ./install-wireguard2home.sh --role vps
+```
+
+**Schritt 3 — Gateway-Host einrichten** (auf dem Raspberry Pi / Gateway-Rechner):
+
+```bash
+sudo ./install-wireguard2home.sh --role gateway --vps-host root@DEIN_VPS
+```
+
+Der Bootstrap richtet VPS und Gateway-Host vollständig ein, überträgt alle Keys automatisch und aktiviert WireGuard auf beiden Seiten. Kein manuelles Eintragen von Keys nötig.
+
+**Schritt 4 — VPN-Verwaltung starten:**
+
+```bash
+sudo /root/Wireguard2Home.sh
+```
+
+---
+
+# Architektur
+
+## Topologie
 
 ```text
 Internet
    │
    ▼
-VPS (WireGuard Hub)
-   │
+VPS (WireGuard Hub, öffentliche IP)
+   │  WireGuard-Tunnel
    ▼
-WireGuard Tunnel
-   │
-   ▼
-Raspberry Pi Gateway
-   │
+Gateway-Host (Raspberry Pi o. ä., hinter CGNAT)
+   │  Routing + NAT
    ▼
 Heimnetzwerk
 ```
 
----
+Das Projekt löst das CGNAT-Problem: Der Heimanschluss hat keine öffentlich erreichbare IP. Der VPS hat eine feste IP und dient als Hub — der Gateway-Host baut den Tunnel aktiv auf.
 
-# Infrastruktur
+## Komponenten
 
-## VPS
+### VPS (Hub)
 
-Funktionen:
+* WireGuard Server — zentraler Tunnelpunkt
+* Reverse Proxy (optional) — Nginx Proxy Manager
+* Monitoring (optional) — Uptime Kuma, Watchtower, CrowdSec
+* SSL-Termination — Let's Encrypt über NPM
+* Fail2Ban / CrowdSec — Zugriffsschutz
 
-* WireGuard Server
-* Reverse Proxy
-* SSL Termination
-* CrowdSec
-* Fail2Ban
-* Watchtower
-* Uptime Kuma
-* Tunnel Hub
+### Gateway-Host (Heimnetz-Seite)
 
----
+* WireGuard Client — baut Tunnel zum VPS auf
+* IP-Forwarding + NAT/Masquerade — Heimnetz-Routing
+* Backup-Empfänger — empfängt automatische Offsite-Backups vom VPS
 
-## Raspberry Pi
+### WireGuard-Adressierung
 
-Funktionen:
+| Gerät | WireGuard-IP |
+| --- | --- |
+| VPS | 10.100.0.1 |
+| Gateway-Host | 10.100.0.2 |
+| Clients ab | 10.100.0.3 |
 
-* Heimnetz Gateway
-* Tunnel Endpoint
-* Routing
-* Zugriff auf internes LAN
-
----
-
-## Heimnetz
-
-Aktuelles Netz:
-
-```text
-192.168.50.0/24
-```
-
----
-
-# WireGuard Netz
-
-```text
-10.100.0.0/24
-```
-
----
-
-# Adressierung
-
-| Gerät                | IP         |
-| -------------------- | ---------- |
-| VPS                  | 10.100.0.1 |
-| Raspberry Pi Gateway | 10.100.0.2 |
-| Clients ab           | 10.100.0.3 |
+WireGuard-Netz: `10.100.0.0/24`  
+Heimnetz (Beispiel): `192.168.50.0/24` — beim Setup auf das eigene Subnetz anpassen.
 
 ---
 
 # Features
 
-## Client erstellen
+## Client-Manager
 
-Automatisch:
+Clients (Smartphones, Laptops, etc.) werden über das interaktive Menü angelegt:
 
-* nächste freie IP finden
+* nächste freie IP automatisch ermitteln
 * Keypair generieren
-* `.conf` erzeugen
-* QR-Code erzeugen
-* PNG speichern
-* Server-Config erweitern
+* `.conf`-Datei erzeugen
+* QR-Code erzeugen und als PNG speichern
+* Server-Config live aktualisieren (ohne Tunnel-Unterbrechung)
 
----
-
-## DNS Auswahl
+## DNS-Auswahl
 
 Beim Erstellen eines Clients wird ein DNS-Server zugewiesen. Die Optionen sind in drei Gruppen aufgeteilt:
 
@@ -183,11 +164,7 @@ WIREGUARD2HOME_DNS_ROUTER_LABEL="FRITZ!Box"
 WIREGUARD2HOME_DNS_ROUTER_VALUE="192.168.50.1"
 ```
 
-Für reine Split-Tunnel-Clients ohne Namensauflösung kann `Kein DNS` gewählt werden.
-
----
-
-## Tunnel Modi
+## Tunnel-Modi
 
 ### Full Tunnel
 
@@ -195,10 +172,7 @@ Für reine Split-Tunnel-Clients ohne Namensauflösung kann `Kein DNS` gewählt w
 AllowedIPs = 0.0.0.0/0
 ```
 
-Gesamter Traffic läuft über VPN.
-Sinnvoll für Reisen, fremde WLANs und wenn der Client immer so verhält, als wäre er komplett im geschützten Heim- oder VPS-Netz.
-
----
+Gesamter Traffic läuft über VPN. Sinnvoll für Reisen und fremde WLANs.
 
 ### Split Tunnel Heimnetz
 
@@ -208,28 +182,16 @@ AllowedIPs = 192.168.50.0/24, 10.100.0.0/24
 
 Nur Heimnetzverkehr über VPN. Das normale Internet bleibt lokal.
 
----
-
 ### Split Tunnel + Heim-DNS-Filter
-
-Beispiel:
 
 ```ini
 DNS = 192.168.50.53
 AllowedIPs = 192.168.50.0/24, 10.100.0.0/24, 192.168.50.53/32
 ```
 
-Praktisch für Handy, Tablet oder Laptop unterwegs:
-
-* Internet bleibt direkt über Mobilfunk oder lokales WLAN
-* Interne Heimnetz-Ziele sind über WireGuard erreichbar
-* DNS wird fest auf den Heim-DNS (AdGuard Home, Pi-hole) gesetzt
-
----
+Handy, Tablet oder Laptop unterwegs: Internet bleibt direkt, Heimnetz und Heim-DNS sind erreichbar.
 
 ### Individueller Split Tunnel
-
-Beispiel:
 
 ```ini
 AllowedIPs = 192.168.50.10/32, 192.168.50.20/32, 10.100.0.0/24
@@ -237,248 +199,116 @@ AllowedIPs = 192.168.50.10/32, 192.168.50.20/32, 10.100.0.0/24
 
 Nur ausgewählte Hosts/Netze über VPN.
 
----
+## Status Dashboard
 
-# Status Dashboard
+Integriertes Live-Dashboard mit:
 
-Wireguard2Home enthält ein integriertes WireGuard-Dashboard mit:
+* Online-/Offline-/Stale-Status pro Client
+* letztem Handshake, interner WireGuard-IP, externem Endpoint
+* RX/TX Traffic (live, täglich, monatlich)
 
-* Online-/Offline-/Stale-Status
-* letztem Handshake
-* interner WireGuard-IP
-* externem Endpoint
-* RX/TX Traffic pro Client (live, täglich, monatlich)
-
-Verfügbare Ansichten:
-
-* `radar` — kompakte Live-Tafel
-* `inspector` — Detailansicht mit Ranglisten und Infra-Block
-
-Tasten:
-
-* `v` oder `tab` zum Umschalten
-* `q` zum Beenden
+Ansichten: `radar` (Übersicht) und `inspector` (Detailansicht).  
+Tasten: `v`/`tab` zum Umschalten, `q` zum Beenden.
 
 ## Speedtests
 
-* `Tunnel Speedtest` — misst den Durchsatz über den WireGuard-Tunnel mit `iperf3`
-* `VPS Aussen-Speedtest` — misst einen HTTP-Download vom VPS als Richtwert für die äußere Anbindung
+* **Tunnel Speedtest** — misst den Durchsatz über den WireGuard-Tunnel mit `iperf3`
+* **VPS Aussen-Speedtest** — misst einen HTTP-Download als Richtwert für die VPS-Anbindung
 
 ---
 
-# Projektstruktur
+# Installation
 
-## Repository
+## Projektstruktur
 
 ```text
-README.md
-install-wireguard2home.sh     ← Self-contained Bootstrap (7000+ Zeilen, beinhaltet alle Sub-Scripts)
-install-vps.sh                ← VPS-Installer (eigenständig und im Bootstrap eingebettet)
-install-gateway-host.sh       ← Gateway-Host-Installer (eigenständig und im Bootstrap eingebettet)
+install-wireguard2home.sh     ← Self-contained Bootstrap (7000+ Zeilen, alle Sub-Scripts eingebettet)
+install-vps.sh                ← VPS-Installer (eigenständig + im Bootstrap eingebettet)
+install-gateway-host.sh       ← Gateway-Host-Installer (eigenständig + im Bootstrap eingebettet)
 Wireguard2Home.sh             ← Zentrale CLI für den VPS-Betrieb
-wireguard-dashboard.sh        ← Live-Dashboard (eigenständig und im Bootstrap eingebettet)
-create-wg-client.sh           ← Client-Manager (eigenständig und im Bootstrap eingebettet)
-backup-wireguard2home.sh      ← Backup-Script (eigenständig und im Bootstrap eingebettet)
-restore-wireguard2home.sh     ← Restore-Script (eigenständig und im Bootstrap eingebettet)
+wireguard-dashboard.sh        ← Live-Dashboard (eingebettet)
+create-wg-client.sh           ← Client-Manager (eingebettet)
+backup-wireguard2home.sh      ← Backup-Script (eingebettet)
+restore-wireguard2home.sh     ← Restore-Script (eingebettet)
 runtime-paths.sh              ← Gemeinsame Laufzeit-Konfiguration (eingebettet)
 ```
 
-Hinweis:
-Auf dem VPS wird produktiv nur `Wireguard2Home.sh` verwendet.
-Die Einzel-Scripts bleiben im Repository als kanonische Quelle und Referenz.
-`install-wireguard2home.sh` bündelt alle Sub-Scripts als eingebettete Heredocs —
-eine Installation benötigt keine externen Downloads.
-
-## Wichtige Pfade (Standard-Setup)
-
-| Pfad | Inhalt |
-| --- | --- |
-| `/etc/wireguard/wg0.conf` | WireGuard Server-Config |
-| `/root/Wireguard2Home.sh` | Zentrale CLI |
-| `/root/wg-clients/` | Client-Configs und QR-Codes |
-| `/root/backups/gate2home/` | Lokale Backups |
-| `/etc/wireguard2home.conf` | Laufzeit-Konfiguration |
-
-Die Pfade unter `/root/` sind Standardwerte für `SERVICE_USER=root`.
-Mit `--service-user USERNAME` werden alle App-Dateien stattdessen ins Home des angegebenen Users gelegt.
-
----
-
-# Installer
+Auf dem VPS wird produktiv nur `Wireguard2Home.sh` verwendet. Der Bootstrap bündelt alle Sub-Scripts als Heredocs — keine externen Downloads zur Laufzeit nötig.
 
 ## Bootstrap (empfohlener Weg)
 
-Der Bootstrap `install-wireguard2home.sh` ist **vollständig eigenständig** — alle Sub-Scripts sind eingebettet.
-Ein einzelner Download genügt; es sind keine weiteren Remote-Zugriffe nötig.
-
-> **Root-Login ist nicht nötig.** Der Installer benötigt Root-Rechte (für `wg`, `systemctl`, `iptables`),
-> aber jeder User mit `sudo`-Berechtigung kann ihn ausführen.
-
-### Download via curl
+> **Root-Login ist nicht nötig.** Der Installer benötigt Root-Rechte (für `wg`, `systemctl`, `iptables`), aber jeder User mit `sudo`-Berechtigung kann ihn ausführen.
 
 ```bash
+# curl
 curl -fsSL \
   https://raw.githubusercontent.com/wikicell/Wireguard2Home/main/install-wireguard2home.sh \
   -o install-wireguard2home.sh
-chmod +x install-wireguard2home.sh
-```
 
-### Download via wget
-
-```bash
+# wget
 wget -O install-wireguard2home.sh \
   https://raw.githubusercontent.com/wikicell/Wireguard2Home/main/install-wireguard2home.sh
+
 chmod +x install-wireguard2home.sh
-```
-
-### Alternativ: SCP aus einem lokalen Klon
-
-```bash
-scp install-wireguard2home.sh user@DEIN_VPS:~/
-```
-
-### Dann starten
-
-```bash
 sudo ./install-wireguard2home.sh
 ```
 
-Wenn das Script im gleichen Verzeichnis wie die Einzel-Scripts liegt (z. B. bei einem `git clone`),
-nutzt es die lokalen Dateien direkt. Andernfalls extrahiert es die eingebetteten Versionen.
-Als letzter Fallback lädt es fehlende Scripts von GitHub nach.
-
----
-
-### Bootstrap auf dem VPS starten
-
-```bash
-sudo ./install-wireguard2home.sh --role vps
-```
-
-* richtet den VPS vollständig ein (Pakete, Keys, wg0.conf-Template, Wireguard2Home.sh)
-* zeigt danach einen fertigen Gateway-Host-Befehl mit allen benötigten Keys
-
----
-
-### Bootstrap auf dem Gateway-Host starten
-
-```bash
-sudo ./install-wireguard2home.sh --role gateway --vps-host root@DEIN_VPS
-```
-
-Mit eigenem SSH-Key:
-
-```bash
-sudo ./install-wireguard2home.sh --role gateway --vps-host root@DEIN_VPS --vps-ssh-key ~/.ssh/id_rsa
-```
-
-* stößt den VPS-Installer remote per SSH an
-* überträgt benötigte Scripts per SCP (kein GitHub-Download auf dem VPS nötig)
-* liest VPS WireGuard-Key und Backup-Key automatisch aus
-* installiert den Gateway-Host lokal mit genau diesen Werten
-
----
-
-### Manuelle Installation (Schritt für Schritt)
-
-Wer lieber einzelne Scripts manuell ausführen möchte, kann die Einzel-Scripts direkt aus dem Repository nutzen.
-
-**VPS:**
-
-```bash
-sudo ./install-vps.sh
-```
-
-**Gateway-Host:**
-
-```bash
-sudo ./install-gateway-host.sh \
-  --server-public-key "VPS_PUBLIC_KEY" \
-  --vps-backup-public-key "VPS_BACKUP_PUBLIC_KEY"
-```
-
----
-
 ### Bootstrap-Optionen
 
-* `--role vps|gateway`
-  Erzwingt die Installationsrichtung.
-* `--vps-host USER@HOST`
-  Adresse des VPS für den Gateway-Weg (mit SSH-Zugriff).
-* `--vps-ssh-key PFAD`
-  SSH-Key für die VPS-Verbindung, wenn kein Agent-Key verfügbar ist.
-* `--service-user USER`
-  Lokaler administrativer User für App-Dateien, Backups und Client-Configs.
-* `--service-home PFAD`
-  Home-Pfad des lokalen Service-Users.
-* `--remote-service-user USER`
-  Service-User auf dem VPS.
-* `--remote-service-home PFAD`
-  Home des Service-Users auf dem VPS.
-* `--remote-install-dir PFAD`
-  Zielverzeichnis für Scripts auf dem VPS.
-* `--update`
-  Aktualisiert nur die Runtime-Skripte (`Wireguard2Home.sh`, Dashboard, Client-Manager etc.)
-  auf dem lokalen Host — ohne WireGuard-Konfiguration oder Keys anzufassen.
-  Mit `--role gateway --vps-host USER@HOST` wird der VPS gleichzeitig per SSH aktualisiert.
+| Option | Beschreibung |
+| --- | --- |
+| `--role vps\|gateway` | Installationsrichtung erzwingen |
+| `--vps-host USER@HOST` | VPS-Adresse für den Gateway-Weg |
+| `--vps-ssh-key PFAD` | SSH-Key für VPS-Verbindung |
+| `--service-user USER` | Lokaler administrativer User |
+| `--service-home PFAD` | Home-Pfad des Service-Users |
+| `--remote-service-user USER` | Service-User auf dem VPS |
+| `--remote-service-home PFAD` | Home des Service-Users auf dem VPS |
+| `--remote-install-dir PFAD` | Zielverzeichnis für Scripts auf dem VPS |
+| `--update` | Nur Runtime-Skripte aktualisieren (Keys/Config bleiben unangetastet) |
+
+**Skripte aktualisieren ohne Neuinstallation:**
 
 ```bash
-# Nur lokalen VPS aktualisieren
+# Lokalen Host aktualisieren
 sudo ./install-wireguard2home.sh --update
 
 # VPS und Gateway-Host gleichzeitig
 sudo ./install-wireguard2home.sh --update --role gateway --vps-host root@DEIN_VPS
 ```
 
----
-
 ## VPS-Installer (install-vps.sh)
 
-Der VPS-Installer richtet Kern-Abhängigkeiten, Verzeichnisse, den Backup-SSH-Key und bei Bedarf ein `wg0.conf`-Template ein.
-
 ```bash
-curl -fsSL \
-  https://raw.githubusercontent.com/wikicell/Wireguard2Home/main/install-vps.sh \
-  -o install-vps.sh
-chmod +x install-vps.sh
-sudo ./install-vps.sh
-```
+# Nur VPS, ohne optionale Stacks
+sudo ./install-wireguard2home.sh --role vps
 
-Optional:
-
-```bash
-sudo ./install-vps.sh --with-ufw-fail2ban --with-docker
+# Mit Reverse Proxy und Monitoring
+sudo ./install-wireguard2home.sh --role vps --with-reverse-proxy --with-monitoring
 ```
 
 ### Installationsoptionen
 
-* `--script-source PFAD` — alternative Quelle für `Wireguard2Home.sh`
-* `--config-file PFAD` — abweichender Pfad für `/etc/wireguard2home.conf`
-* `--service-user USER` — administrativer User für App-Dateien
-* `--service-home PFAD` — Home des Service-Users
-* `--backup-ssh-user USER` — User für den Offsite-Backup-SSH-Key
-* `--backup-remote-user USER` — Ziel-User auf dem Gateway-Host
-* `--server-address CIDR` — lokale WireGuard-IP des VPS
-* `--wg-network CIDR` — WireGuard-Subnetz
-* `--listen-port PORT` — WireGuard-Lauschport (Standard: 51820)
-* `--lan-subnet CIDR` — Heimnetz hinter dem Gateway-Host
-* `--dns-home-label TEXT` — Anzeigename für Heim-DNS-Preset
-* `--dns-home-value IPS` — DNS-Wert für Heim-DNS-Preset
-* `--dns-router-label TEXT` — Anzeigename für zweites DNS-Preset
-* `--dns-router-value IPS` — DNS-Wert für zweites Preset
-* `--with-ufw-fail2ban` — installiert zusätzlich ufw und fail2ban (Host)
-* `--with-docker` — installiert Docker und Compose-Plugin
-* `--with-reverse-proxy` — Reverse-Proxy-Stack (Nginx Proxy Manager); impliziert `--with-docker`
-* `--with-monitoring` — Monitoring-Stack (Uptime-Tool, Watchtower, CrowdSec); impliziert `--with-docker`
-* `--with-crowdsec-bouncer` — aktiviert zusätzlich den CrowdSec Firewall-Bouncer (Standard: aus)
-* `--pushover-token` / `--pushover-user` — Pushover-Zugang für Watchtower-Benachrichtigungen (optional, interaktiv abgefragt)
-* `--with-swap` — richtet eine Swap-Datei ein (Standard: 1024 MB unter `/swapfile`); empfohlen bei wenig RAM zusammen mit `--with-monitoring`
-* `--swap-size-mb N` — Größe der Swap-Datei in MB (Standard: 1024)
-* `--swap-file PFAD` — Pfad der Swap-Datei (Standard: `/swapfile`)
+| Option | Beschreibung |
+| --- | --- |
+| `--script-source PFAD` | Alternative Quelle für `Wireguard2Home.sh` |
+| `--config-file PFAD` | Abweichender Pfad für `/etc/wireguard2home.conf` |
+| `--service-user USER` | Administrativer User für App-Dateien |
+| `--service-home PFAD` | Home des Service-Users |
+| `--listen-port PORT` | WireGuard-Lauschport (Standard: 51820) |
+| `--lan-subnet CIDR` | Heimnetz hinter dem Gateway-Host |
+| `--with-ufw-fail2ban` | Installiert ufw und fail2ban (Host) |
+| `--with-docker` | Installiert Docker und Compose-Plugin |
+| `--with-reverse-proxy` | Reverse-Proxy-Stack (NPM); impliziert `--with-docker` |
+| `--with-monitoring` | Monitoring-Stack (Uptime Kuma, Watchtower, CrowdSec); impliziert `--with-docker` |
+| `--with-crowdsec-bouncer` | CrowdSec Firewall-Bouncer (Standard: aus, Schutz vor SSH-Aussperren) |
+| `--pushover-token TOKEN` | Pushover API-Token für Watchtower-Benachrichtigungen |
+| `--pushover-user KEY` | Pushover User-Key |
+| `--with-swap` | Swap-Datei einrichten (Standard: 1024 MB unter `/swapfile`) |
+| `--swap-size-mb N` | Größe der Swap-Datei in MB |
+| `--swap-file PFAD` | Pfad der Swap-Datei |
 
-Hinweis: Bei `--with-monitoring` prüft der Installer den verfügbaren RAM und
-warnt (bzw. fragt interaktiv nach), wenn weniger als ~900 MB erkannt werden.
-Details unter [Hardware-Anforderungen](#hardware-anforderungen).
+> Bei `--with-monitoring` prüft der Installer den verfügbaren RAM und warnt bei weniger als ~900 MB. Details unter [Hardware-Anforderungen](#hardware-anforderungen).
 
 ### Keys auf dem VPS
 
@@ -486,28 +316,17 @@ Details unter [Hardware-Anforderungen](#hardware-anforderungen).
 # WireGuard Server Public Key
 sudo cat /etc/wireguard/server_public.key
 
-# SSH Public Key für Offsite-Backups zum Gateway-Host
-# (Pfad hängt vom SERVICE_USER ab, Standard: root)
+# SSH Public Key für Offsite-Backups (Standard: root)
 sudo cat /root/.ssh/gate2home_backup.pub
-# oder mit eigenem Service-User:
-# cat ~/.ssh/gate2home_backup.pub
 ```
-
----
 
 ## Gateway-Host-Installer (install-gateway-host.sh)
 
-Richtet Kern-Abhängigkeiten, IP-Forwarding, Backup-Empfangsverzeichnis und ein `wg0.conf`-Template ein.
+Richtet Kern-Abhängigkeiten, IP-Forwarding, NAT/Masquerade und ein `wg0.conf`-Template ein.
 
-```bash
-curl -fsSL \
-  https://raw.githubusercontent.com/wikicell/Wireguard2Home/main/install-gateway-host.sh \
-  -o install-gateway-host.sh
-chmod +x install-gateway-host.sh
-sudo ./install-gateway-host.sh
-```
+**NAT/Masquerade ist standardmäßig aktiv** — das LAN-Interface wird automatisch über die Default-Route erkannt. Das ist eine Grundvoraussetzung für den Heimnetz-Zugriff vom VPS und von Clients aus.
 
-Unterstützte Distributionen:
+> Ohne Masquerade landen Pakete am Heimnetz-Gerät, aber die Antwort findet keinen Weg zurück (das Heimgerät kennt `10.100.0.0/24` nicht).
 
 | Zielsystem | Status |
 | --- | --- |
@@ -519,20 +338,13 @@ Unterstützte Distributionen:
 | VM mit systemd | Gut unterstützt |
 | VM ohne systemd | Teilweise — Dienste manuell starten |
 
-**NAT/Masquerade ist standardmäßig aktiv** — das LAN-Interface wird automatisch
-über die Default-Route erkannt (`ip route show default`). Das ist eine
-Grundvoraussetzung für den Heimnetz-Zugriff vom VPS und von Clients aus.
-
-> Ohne Masquerade landen Pakete zwar am Heimnetz-Gerät, aber die Antwort
-> findet keinen Weg zurück (das Heimgerät kennt `10.100.0.0/24` nicht).
-
 ```bash
 # Standard — Masquerade automatisch aktiv:
 sudo ./install-gateway-host.sh \
   --server-public-key "VPS_PUBLIC_KEY" \
   --vps-backup-public-key "VPS_BACKUP_PUBLIC_KEY"
 
-# Interface manuell angeben (falls Auto-Detection fehlschlägt):
+# Interface manuell angeben:
 sudo ./install-gateway-host.sh \
   --server-public-key "VPS_PUBLIC_KEY" \
   --vps-backup-public-key "VPS_BACKUP_PUBLIC_KEY" \
@@ -547,76 +359,70 @@ sudo ./install-gateway-host.sh \
 
 ### Installationsoptionen
 
-* `--gateway-address CIDR` — WireGuard-IP des Gateway-Hosts (Standard: 10.100.0.2/24)
-* `--wg-network CIDR` — WireGuard-Subnetz
-* `--lan-subnet CIDR` — Heimnetz hinter dem Gateway-Host
-* `--service-user USER` — lokaler administrativer User
-* `--server-endpoint HOST:PORT` — WireGuard-Endpoint des VPS
-* `--server-public-key KEY` — WireGuard-Public-Key des VPS
-* `--vps-backup-public-key KEY` — SSH-Public-Key des VPS für Backup-Zugriff
-* `--masquerade-interface IFACE` — LAN-Interface für NAT manuell angeben (Standard: automatisch)
-* `--no-masquerade` — Masquerade deaktivieren (Standard: aktiv)
-
-### Gateway-Host Public Key
+| Option | Beschreibung |
+| --- | --- |
+| `--gateway-address CIDR` | WireGuard-IP des Gateway-Hosts (Standard: 10.100.0.2/24) |
+| `--lan-subnet CIDR` | Heimnetz hinter dem Gateway-Host |
+| `--service-user USER` | Lokaler administrativer User |
+| `--server-endpoint HOST:PORT` | WireGuard-Endpoint des VPS |
+| `--server-public-key KEY` | WireGuard-Public-Key des VPS |
+| `--vps-backup-public-key KEY` | SSH-Public-Key des VPS für Backup-Zugriff |
+| `--masquerade-interface IFACE` | LAN-Interface für NAT manuell angeben |
+| `--no-masquerade` | Masquerade deaktivieren |
 
 ```bash
+# Gateway-Host Public Key
 sudo cat /etc/wireguard/raspberry_public.key
 ```
 
----
-
 ## Reihenfolge einer frischen Installation
 
-1. VPS: `install-wireguard2home.sh --role vps` ausführen.
-2. VPS Public Key und Backup Public Key werden vom Installer ausgegeben und automatisch weitergegeben.
-3. Gateway-Host: `install-wireguard2home.sh --role gateway --vps-host root@VPS` ausführen.
-   Oder manuell: `install-gateway-host.sh` mit beiden Keys ausführen.
-4. ~~Den Peer-Block manuell eintragen~~ — der Bootstrap überträgt den Gateway-Peer-Block
-   automatisch per SCP auf den VPS und lädt WireGuard neu. Kein manueller Schritt nötig.
-5. Auf beiden Systemen `systemctl status wg-quick@wg0` und `wg show` prüfen.
-6. Auf dem VPS `/root/Wireguard2Home.sh` starten.
+1. **VPS:** `sudo ./install-wireguard2home.sh --role vps` ausführen.
+2. Der Installer gibt VPS Public Key und Backup Public Key aus — diese werden intern weitergegeben.
+3. **Gateway-Host:** `sudo ./install-wireguard2home.sh --role gateway --vps-host root@VPS` ausführen.
+4. Der Bootstrap überträgt den Gateway-Peer-Block automatisch per SCP auf den VPS und lädt WireGuard neu.
+5. Tunnel prüfen: `wg show` auf beiden Systemen — `latest handshake` muss erscheinen.
+6. **VPS:** `sudo /root/Wireguard2Home.sh` starten.
 
----
-
-# Laufzeit-Konfiguration
+## Laufzeit-Konfiguration
 
 Alle Scripts lesen `/etc/wireguard2home.conf` und passen Pfade und User entsprechend an.
 
-Typische Anpassungen:
+**Wichtige Pfade (Standard `SERVICE_USER=root`):**
+
+| Pfad | Inhalt |
+| --- | --- |
+| `/etc/wireguard/wg0.conf` | WireGuard Server-Config |
+| `/root/Wireguard2Home.sh` | Zentrale CLI |
+| `/root/wg-clients/` | Client-Configs und QR-Codes |
+| `/root/backups/gate2home/` | Lokale Backups |
+| `/etc/wireguard2home.conf` | Laufzeit-Konfiguration |
+
+Mit `--service-user USERNAME` werden alle App-Dateien ins Home des angegebenen Users gelegt.
+
+Typische Anpassungen in `/etc/wireguard2home.conf`:
 
 ```bash
 WIREGUARD2HOME_SERVICE_USER=w2h
 WIREGUARD2HOME_SERVICE_HOME=/home/w2h
 WIREGUARD2HOME_BACKUP_SSH_USER=backupbot
-WIREGUARD2HOME_BACKUP_SSH_HOME=/home/backupbot
 WIREGUARD2HOME_BACKUP_REMOTE_USER=backup
 WIREGUARD2HOME_BACKUP_REMOTE_HOME=/srv/backup
-WIREGUARD2HOME_CLIENT_DIR=/home/w2h/wg-clients
-WIREGUARD2HOME_BACKUP_BASE=/home/w2h/backups/gate2home
-WIREGUARD2HOME_PRE_RESTORE_ROOT=/home/w2h/pre-restore-backups
-WIREGUARD2HOME_STATE_DIR=/var/lib/gate2home/wg-dashboard
-WIREGUARD2HOME_TARGET_SCRIPT=/home/w2h/Wireguard2Home.sh
-WIREGUARD2HOME_BACKUP_SSH_KEY=/home/backupbot/.ssh/gate2home_backup
-WIREGUARD2HOME_BACKUP_REMOTE_HOST=10.100.0.2
-WIREGUARD2HOME_BACKUP_REMOTE_TARGET=/srv/backup/backups/from-vps
 WIREGUARD2HOME_DNS_HOME_LABEL="AdGuard Home"
 WIREGUARD2HOME_DNS_HOME_VALUE=192.168.50.53
 WIREGUARD2HOME_DNS_ROUTER_LABEL="FRITZ!Box"
 WIREGUARD2HOME_DNS_ROUTER_VALUE=192.168.50.1
 WIREGUARD2HOME_LAN_SUBNET=192.168.50.0/24
 WIREGUARD2HOME_SPEEDTEST_HOST=10.100.0.2
-WIREGUARD2HOME_SPEEDTEST_USER=root
-WIREGUARD2HOME_SPEEDTEST_SIZE_MB=64
 ```
 
-Hinweis:
-
-* Systemnahe Dateien wie `/etc/wireguard`, `systemctl` und `sysctl` bleiben weiterhin Root-Aufgaben.
-* Die Konfiguration macht das Projekt benutzerkonfigurierbar, nicht root-frei.
+> Systemnahe Dateien wie `/etc/wireguard`, `systemctl` und `sysctl` bleiben weiterhin Root-Aufgaben. Die Konfiguration macht das Projekt benutzerkonfigurierbar, nicht root-frei.
 
 ---
 
-# Starten
+# Betrieb
+
+## Starten
 
 ```bash
 # Standard (SERVICE_USER=root):
@@ -626,9 +432,7 @@ sudo /root/Wireguard2Home.sh
 sudo /home/USERNAME/Wireguard2Home.sh
 ```
 
----
-
-# Menü
+## Menü
 
 ```text
 1) Client Manager
@@ -641,69 +445,15 @@ sudo /home/USERNAME/Wireguard2Home.sh
 8) Beenden
 ```
 
----
+## Reboot-Verhalten
 
-# Sicherheit
-
-Das Projekt verwaltet Private Keys, VPN-Zugangsdaten und interne Netzstrukturen. Daher:
-
-* niemals öffentlich teilen
-* Backups verschlüsseln
-* Zugriff auf das Client-Verzeichnis absichern (Standard: `/root/wg-clients`)
-
----
-
-# Backup Empfehlung
-
-Wichtige Verzeichnisse:
-
-```text
-/etc/wireguard/
-/root/wg-clients/
-/root/backups/gate2home/
-```
-
-Im Standard-Setup liegen Client-Dateien, Backups und Restore-Snapshots unter `/root`.
-Mit einer angepassten `/etc/wireguard2home.conf` verschieben sich diese Pfade passend zum gewählten Service-User.
-
----
-
-# Restore
-
-Wireguard2Home enthält eine integrierte Restore-Funktion für gesicherte Gate2Home-Backups.
-
-## Interaktiv starten
+WireGuard startet automatisch nach Neustart (wird vom Installer eingerichtet):
 
 ```bash
-sudo /root/Wireguard2Home.sh   # Standard (SERVICE_USER=root)
-```
-
-Dann im Menü: `5) Restore starten`
-
-## Varianten
-
-* `Echter Restore`
-* `Dry-Run`
-
-## Restore-Modi
-
-* `wireguard` — stellt `/etc/wireguard` wieder her
-* `clients` — stellt das konfigurierte Client-Verzeichnis wieder her
-* `full` — stellt alle gesicherten Verzeichnisse wieder her
-
-Vor jeder Wiederherstellung wird der aktuelle Zustand zusätzlich unter dem konfigurierten Restore-Snapshot-Pfad gesichert (Standard: `/root/pre-restore-backups/`).
-
----
-
-# Reboot Verhalten
-
-WireGuard startet automatisch:
-
-```bash
+# Manuell prüfen / aktivieren:
 sudo systemctl enable wg-quick@wg0
+sudo systemctl status wg-quick@wg0
 ```
-
-Das Setup ist reboot-sicher.
 
 ---
 
@@ -711,28 +461,21 @@ Das Setup ist reboot-sicher.
 
 Optionaler Docker-Stack auf dem VPS, aktivierbar mit `--with-monitoring`:
 
-* Uptime Kuma — Verfügbarkeits-Monitoring, Port `3001`
-* Watchtower — automatische Container-Updates
-* CrowdSec — Angriffserkennung (SSH + Nginx Proxy Manager)
-* Pushover — Benachrichtigungen über Watchtower (Token/User interaktiv oder per `--pushover-token` / `--pushover-user`)
-* Fail2Ban — Host-seitig über `--with-ufw-fail2ban`
-
-Beispiel:
+* **Uptime Kuma** — Verfügbarkeits-Monitoring (Port `3001`, via NPM erreichbar)
+* **Watchtower** — automatische Container-Updates (täglich 04:00 Uhr)
+* **CrowdSec** — verhaltensbasierte Angriffserkennung (SSH + NPM-Logs)
+* **Pushover** — Benachrichtigungen über Watchtower (optional, interaktiv oder per Flag)
+* **Fail2Ban** — Host-seitig über `--with-ufw-fail2ban`
 
 ```bash
 sudo ./install-vps.sh --with-monitoring
 ```
 
-Hinweise:
-
-* `--with-monitoring` installiert bei Bedarf automatisch Docker und das Compose-Plugin.
-* Der CrowdSec **Firewall-Bouncer** ist standardmäßig **aus** (Schutz vor versehentlichem SSH-Aussperren) und lässt sich mit `--with-crowdsec-bouncer` aktivieren.
-* Pushover-Secrets landen ausschließlich in einer root-only `/opt/watchtower/.env` — niemals im Repository.
+* `--with-monitoring` installiert Docker bei Bedarf automatisch.
+* Der CrowdSec **Firewall-Bouncer** ist standardmäßig **aus** (Schutz vor SSH-Aussperren) — aktivierbar mit `--with-crowdsec-bouncer`.
+* Pushover-Secrets landen ausschließlich in einer root-only `/opt/watchtower/.env`.
 
 ## Compose-Dateien (Monitoring)
-
-Der Installer legt die folgenden Dateien an. Sie sind hier dokumentiert, falls
-du sie manuell prüfen, anpassen oder ohne den Installer ausrollen möchtest.
 
 ### Uptime Kuma — `/opt/uptime-kuma/docker-compose.yml`
 
@@ -755,17 +498,9 @@ networks:
     name: gate2home_proxy
 ```
 
-> **In NPM:** Forward Hostname `uptime-kuma`, Port `3001`.
+**In NPM:** Forward Hostname `uptime-kuma`, Port `3001`.
 
-**Erster Zugriff / Zugangsdaten Uptime Kuma:**
-
-Uptime Kuma hat ebenfalls keine festen Standard-Zugangsdaten. Beim ersten
-Aufruf von `http://uptime-kuma-domain` erscheint direkt die Registrierung:
-
-1. **Benutzername und Passwort selbst wählen** — es gibt nur einen Admin-Account
-2. Danach sofort einloggen und Services einrichten
-
-→ Auch hier: Setup vor der öffentlichen DNS-Freischaltung abschließen.
+**Erster Zugriff:** Keine Standard-Zugangsdaten — beim ersten Aufruf der Domain erscheint die Registrierung. Admin-Account sofort anlegen, bevor die Domain öffentlich erreichbar ist.
 
 ### Watchtower — `/opt/watchtower/docker-compose.yml`
 
@@ -784,8 +519,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 ```
 
-Die zugehörige `/opt/watchtower/.env` (Modus `600`, nur `root`) enthält bei
-gesetzten Pushover-Werten:
+Die zugehörige `/opt/watchtower/.env` (Modus `600`, nur `root`) enthält bei gesetzten Pushover-Werten:
 
 ```ini
 WATCHTOWER_NOTIFICATIONS=shoutrrr
@@ -794,8 +528,7 @@ PUSHOVER_TOKEN=<TOKEN>
 PUSHOVER_USER=<USER>
 ```
 
-Ohne Pushover bleiben diese Zeilen auskommentiert und Watchtower läuft ohne
-Benachrichtigungen.
+Ohne Pushover bleiben diese Zeilen auskommentiert — Watchtower läuft ohne Benachrichtigungen.
 
 ### CrowdSec — `/opt/crowdsec/docker-compose.yml`
 
@@ -835,18 +568,24 @@ labels:
 
 Optionaler Docker-Stack auf dem VPS, aktivierbar mit `--with-reverse-proxy`:
 
-* Nginx Proxy Manager — Admin-UI auf Port `81`, HTTP/HTTPS auf `80`/`443`
-* automatische SSL-Zertifikate (Let's Encrypt)
-* externe Domains
+* **Nginx Proxy Manager** — Admin-UI auf Port `81`, HTTP/HTTPS auf `80`/`443`
+* Automatische SSL-Zertifikate (Let's Encrypt)
+* Externe Domains
 * Heimnetz Reverse Proxying (über den WireGuard-Tunnel zum Gateway-Host)
-
-Beispiel:
 
 ```bash
 sudo ./install-vps.sh --with-reverse-proxy
+
+# Beide Stacks kombinieren:
+sudo ./install-vps.sh --with-reverse-proxy --with-monitoring
 ```
 
-Erst-Login im Nginx Proxy Manager: `admin@example.com` / `changeme` — bitte sofort ändern.
+**Erstzugang zum Admin-Panel** per SSH-Tunnel (Port 81 ist auf localhost gebunden — nicht direkt aus dem Internet erreichbar):
+
+```bash
+ssh -L 8181:localhost:81 root@VPS_IP -N
+```
+→ `http://localhost:8181` — Erst-Login: `admin@example.com` / `changeme` — **sofort ändern**.
 
 ## Compose-Datei (Reverse Proxy)
 
@@ -874,27 +613,17 @@ networks:
     name: gate2home_proxy
 ```
 
-> **Sicherheit:** Port `81` (Admin-Panel) ist auf `127.0.0.1` gebunden —
-> nicht aus dem Internet erreichbar. Docker umgeht UFW via iptables;
-> `127.0.0.1`-Binding ist die einzig zuverlässige Absicherung.
-> Ports `80`/`443` bleiben öffentlich (für eingehenden HTTP/HTTPS-Traffic).
+> **Sicherheit:** Port `81` (Admin-Panel) ist auf `127.0.0.1` gebunden — Docker umgeht UFW via iptables direkt; `127.0.0.1`-Binding ist die einzig zuverlässige Absicherung.
 
-> **Netzwerk:** NPM und Uptime Kuma teilen das externe Netzwerk `gate2home_proxy`.
-> Es wird beim ersten Installer-Lauf automatisch angelegt (`docker network create gate2home_proxy`).
+> **Docker-Netzwerk:** NPM und alle Backend-Dienste (Uptime Kuma etc.) teilen das externe Netzwerk `gate2home_proxy`, das beim ersten Installer-Lauf automatisch angelegt wird.
 
-**Zugriff auf das Admin-Panel** per SSH-Tunnel:
-```bash
-ssh -L 8181:localhost:81 root@VPS_IP -N
-```
-→ `http://localhost:8181` im Browser
-
-**Uptime Kuma über NPM erreichbar machen (Schritt für Schritt):**
+## Dienst über NPM erreichbar machen (Schritt für Schritt)
 
 Voraussetzung: Eine (Sub-)Domain zeigt per DNS-A-Record auf die öffentliche VPS-IP.
 
 1. SSH-Tunnel öffnen: `ssh -L 8181:localhost:81 root@VPS_IP -N`
 2. NPM Admin öffnen: `http://localhost:8181`
-3. Erst-Login: `admin@example.com` / `changeme` → sofort ändern
+3. Erst-Login durchführen und Passwort sofort ändern
 4. *Proxy Hosts* → *Add Proxy Host*:
    - **Domain Names:** `status.deinedomain.de`
    - **Forward Hostname:** `uptime-kuma` ← Container-Name im Docker-Netzwerk
@@ -903,38 +632,85 @@ Voraussetzung: Eine (Sub-)Domain zeigt per DNS-A-Record auf die öffentliche VPS
 5. Tab *SSL* → *Request a new SSL Certificate* → Let's Encrypt aktivieren
 6. Speichern → Uptime Kuma ist unter `https://status.deinedomain.de` erreichbar
 
-Manuelles Ausrollen (statt über den Installer):
+---
 
-```bash
-cd /opt/npm
-sudo docker compose up -d
+# Backup & Restore
+
+## Backup
+
+Das integrierte Backup-System (Menüpunkt 4) sichert:
+
+```text
+/etc/wireguard/        ← WireGuard-Config und Keys
+/root/wg-clients/      ← Client-Configs und QR-Codes
+/root/backups/gate2home/  ← lokale Backup-Rotation
 ```
 
-Beide Stacks lassen sich kombinieren:
+Backups werden als `.tar.gz` gespeichert und automatisch per `rsync` zum Gateway-Host übertragen (Offsite-Sicherung). Lokale und Remote-Rotation sind konfigurierbar.
+
+> Private Keys, VPN-Zugangsdaten und Client-Configs sind sensibel — Backups verschlüsseln und niemals öffentlich teilen.
+
+## Restore
+
+Das Restore-System (Menüpunkt 5) stellt gesicherte Backups wieder her.
 
 ```bash
-sudo ./install-vps.sh --with-reverse-proxy --with-monitoring
+sudo /root/Wireguard2Home.sh   # → Menü → 5) Restore starten
 ```
+
+**Restore-Modi:**
+
+| Modus | Was wird wiederhergestellt |
+| --- | --- |
+| `wireguard` | `/etc/wireguard` (Keys und Server-Config) |
+| `clients` | Client-Verzeichnis (`.conf`-Dateien und QR-Codes) |
+| `full` | Alle gesicherten Verzeichnisse |
+
+**Varianten:** Echter Restore oder Dry-Run (zeigt nur was passieren würde).
+
+Vor jeder Wiederherstellung wird der aktuelle Zustand automatisch unter `/root/pre-restore-backups/` gesichert. Das Archiv wird vor der Extraktion auf Integrität geprüft — bei einem beschädigten Backup bricht der Restore sicher ab.
+
+---
+
+# Sicherheit
+
+## Netzwerk
+
+* **WireGuard** — state-of-the-art Verschlüsselung (ChaCha20, Poly1305, Curve25519)
+* **NAT/Masquerade** — Heimnetz-Geräte sind vom VPS aus nicht direkt adressierbar
+* **Port-Bindings** — Admin-Panels (NPM Port 81, Monitoring Port 3001) sind auf `127.0.0.1` gebunden; Docker-Bypass von UFW via iptables macht `127.0.0.1`-Binding zur einzig zuverlässigen Absicherung
+* **Kein öffentlicher SSH-Key** im Repository — alle sensiblen Werte sind Platzhalter
+
+## Zugangsdaten und Keys
+
+* Private WireGuard-Keys: nur unter `/etc/wireguard/` (Modus `600`, nur root)
+* Backup-SSH-Key: unter `~/.ssh/gate2home_backup` (Modus `600`)
+* Client-Configs: unter `/root/wg-clients/` (Modus `700`, einzelne `.conf` Modus `600`)
+* Pushover-Tokens: root-only `/opt/watchtower/.env` (Modus `600`), niemals im Git
+
+## Empfehlungen
+
+* Backups verschlüsseln (z. B. mit `age` oder `gpg`)
+* Fail2Ban aktivieren: `--with-ufw-fail2ban`
+* CrowdSec Firewall-Bouncer erst nach stabilem Setup: `--with-crowdsec-bouncer`
+* Regelmäßige Updates: `sudo ./install-wireguard2home.sh --update`
+* SSH-Root-Login mit Key absichern, Passwort-Login deaktivieren
 
 ---
 
 # Hardware-Anforderungen
 
-WireGuard selbst ist ein Kernel-Modul und braucht praktisch kein RAM. Der reine
-Tunnel läuft daher auch auf sehr kleinen VPS problemlos. Der optionale
-Reverse-Proxy- und Monitoring-Stack läuft dagegen in Docker-Containern und
-braucht spürbar mehr Arbeitsspeicher.
+WireGuard selbst ist ein Kernel-Modul und braucht praktisch kein RAM. Der reine Tunnel läuft auch auf sehr kleinen VPS problemlos. Der optionale Reverse-Proxy- und Monitoring-Stack läuft in Docker-Containern und braucht spürbar mehr Arbeitsspeicher.
 
-## VPS (Hub)
+## VPS
 
-| Szenario | vCores | RAM | Disk | Port |
-|---|---|---|---|---|
-| Nur Tunnel | 1 | 0.5 GB | 10 GB | beliebig |
-| Tunnel + Reverse Proxy | 1–2 | 1 GB | 10–20 GB | je nach Last |
-| Tunnel + Reverse Proxy + Monitoring | 2 | 2 GB | 20–40 GB | echte 1 Gbit/s |
-| Komfortabel Gigabit, voller Stack | 2–4 | 2 GB | 20–40 GB | echte 1 Gbit/s |
+| Szenario | vCores | RAM | Disk |
+|---|---|---|---|
+| Nur Tunnel | 1 | 0,5 GB | 10 GB |
+| Tunnel + Reverse Proxy | 1–2 | 1 GB | 10–20 GB |
+| Tunnel + Reverse Proxy + Monitoring | 2 | 2 GB | 20–40 GB |
 
-Grober RAM-Bedarf des vollen Stacks im Leerlauf:
+**RAM-Bedarf des vollen Stacks (Leerlauf):**
 
 | Komponente | RAM (typisch) |
 |---|---|
@@ -946,48 +722,114 @@ Grober RAM-Bedarf des vollen Stacks im Leerlauf:
 | Watchtower | ~30 MB |
 | **Summe** | **~650–700 MB** |
 
-Auf einem 0.5-GB-VPS übersteigt das den physischen RAM — Container können vom
-OOM-Killer beendet werden. Abhilfe:
+Auf einem 0,5-GB-VPS übersteigt das den physischen RAM. Abhilfe:
 
-* **Swap** als Notnagel: `--with-swap` (siehe unten). Federt das RAM-Limit ab,
-  ist aber langsamer als echter RAM.
-* **Upgrade** auf ≥ 1 GB (besser 2 GB) RAM — die saubere Lösung für den vollen Stack.
-* **Monitoring auslagern** auf den Gateway-Host (Raspberry), der den VPS durch
-  den Tunnel überwacht.
-
-## Gigabit ausreizen
-
-Entscheidend sind drei Dinge — RAM ist dabei *nicht* der Flaschenhals:
-
-1. **CPU:** WireGuard-Verschlüsselung ist CPU-gebunden. 1 vCore schafft je nach
-   CPU grob 400–900 Mbit/s. Für stabile, symmetrische Gigabit-Last (plus
-   Reverse-Proxy/TLS) sind **2+ vCores** mit AES-NI empfehlenswert.
-2. **Provider-Port:** Viele günstige VPS haben einen gedrosselten oder geteilten
-   Uplink (100–500 Mbit/s). Prüfe die zugesicherte **Anbindung/Port-Speed** —
-   sonst helfen auch viele Cores nichts.
-3. **Gesamte Kette:** Es zählt der langsamste Punkt aus VPS-Uplink,
-   Heimanschluss-Upload und CGNAT-Pfad.
-
-## Swap einrichten
-
-Bei wenig RAM richtet der Installer auf Wunsch eine Swap-Datei ein:
+* **Swap** als Notnagel: `--with-swap` (1024 MB Standard, langsamer als echter RAM)
+* **Upgrade** auf ≥ 1 GB RAM — saubere Lösung für den vollen Stack
+* **Monitoring auslagern** auf den Gateway-Host, der den VPS durch den Tunnel überwacht
 
 ```bash
+# Mit Swap für kleine VPS:
 sudo ./install-vps.sh --with-reverse-proxy --with-monitoring --with-swap
 ```
 
-Standardmäßig 1024 MB unter `/swapfile`, dauerhaft via `/etc/fstab`, mit
-`vm.swappiness=10`. Größe/Pfad anpassbar über `--swap-size-mb` und `--swap-file`.
-Bei aktivem `--with-monitoring` prüft der Installer den RAM und warnt vor zu
-wenig Arbeitsspeicher (interaktiv mit Rückfrage), sofern kein Swap angefordert
-wurde.
+## Gigabit ausreizen
+
+WireGuard-Verschlüsselung ist CPU-gebunden. 1 vCore schafft je nach CPU grob 400–900 Mbit/s. Für stabile Gigabit-Last (plus TLS/Proxy) sind **2+ vCores mit AES-NI** empfehlenswert. Entscheidend ist außerdem der **Provider-Port-Speed** — viele günstige VPS haben gedrosselte Uplinks.
 
 ## Gateway-Host
 
-Ein Raspberry Pi (oder vergleichbarer SBC) mit 1 GB RAM genügt für die
-Gateway-Rolle. Für Gigabit-Durchsatz über den Tunnel gilt auch hier: die CPU
-ist der begrenzende Faktor — ein Raspberry Pi 4/5 ist deutlich schneller als
-ältere Modelle.
+Ein Raspberry Pi 4/5 (≥ 1 GB RAM) genügt vollständig. Ältere Pi-Modelle sind CPU-seitig deutlich langsamer; für Gigabit-Durchsatz ist ein Pi 4 oder neuerer SBC empfehlenswert.
+
+---
+
+# Fehlerbehebung
+
+## Tunnel steht nicht (`wg show` zeigt keinen Handshake)
+
+```bash
+# Auf dem VPS: Peer-Config prüfen
+sudo cat /etc/wireguard/wg0.conf | grep -v PrivateKey
+
+# Auf dem Gateway-Host: Verbindung prüfen
+sudo wg show
+sudo systemctl status wg-quick@wg0
+sudo journalctl -u wg-quick@wg0 -n 30
+```
+
+Häufigste Ursachen:
+* Falscher `PublicKey` im `[Peer]`-Block → neu setzen mit `sudo sed -i ...` oder Installer erneut ausführen
+* VPS-Firewall blockiert UDP 51820 → `sudo ufw allow 51820/udp`
+* Kein Masquerade auf dem Gateway-Host → PostUp/PostDown in `wg0.conf` prüfen
+
+## Heimnetz nicht erreichbar (Tunnel steht, aber kein Ping zu 192.168.x.x)
+
+```bash
+# IP-Forwarding aktiv?
+cat /proc/sys/net/ipv4/ip_forward   # muss 1 sein
+
+# Masquerade-Regel aktiv?
+sudo iptables -t nat -L POSTROUTING -n -v
+```
+
+Kein Eintrag → Masquerade fehlt: PostUp/PostDown in `/etc/wireguard/wg0.conf` einkommentieren und `sudo systemctl restart wg-quick@wg0`.
+
+## NPM-Admin-Panel nicht erreichbar
+
+Port 81 ist auf `127.0.0.1` gebunden — kein Direktzugriff aus dem Internet. Zugriff per SSH-Tunnel:
+
+```bash
+ssh -L 8181:localhost:81 root@VPS_IP -N
+```
+→ `http://localhost:8181`
+
+## Dienst gibt 502 zurück
+
+```bash
+# Kann NPM den Backend-Dienst erreichen?
+docker exec npm curl -s -o /dev/null -w "%{http_code}" http://uptime-kuma:3001
+```
+
+* `200` → Netzwerkpfad OK, Forward-Hostname in NPM falsch eingetragen
+* `Connection refused` → Netzwerk `gate2home_proxy` nicht verbunden oder Container nicht gestartet
+
+```bash
+# Docker-Netzwerk prüfen
+docker network inspect gate2home_proxy
+
+# Container-Status
+docker ps
+```
+
+## `--update` bringt keine Änderungen
+
+`--update` aktualisiert nur die Runtime-Skripte. Neue Installer-Flags (z. B. `--with-monitoring`) erfordern einen vollständigen Installer-Lauf:
+
+```bash
+sudo ./install-wireguard2home.sh --role vps --with-monitoring
+```
+
+---
+
+# Roadmap
+
+## Geplante Features
+
+* **WebUI** — Browserbasierte Clientverwaltung, QR-Code im Browser, Multiuser mit Rollen
+* **REST API** — Client erstellen/löschen, Status abrufen, DNS-Profile verwalten
+* **Dockerisierung** — WireGuard Manager, API und WebUI als Container
+
+## Mögliche Erweiterungen
+
+* `WebUI mit Rollenmodell` — Browseroberfläche mit Login, Rollen, Audit-Log
+* `REST API` — Automatisierung, externe Integrationen, Mobile-Apps
+* `Tailscale- oder ZeroTier-Fallback` — alternativer Overlay bei blockiertem UDP
+* `AdGuard Home / Pi-hole Integration` — DNS-Profile mit Blocklisten koppeln
+* `GeoIP Blocking` — ergänzend zu CrowdSec und Fail2Ban
+* `Multi-Gateway Support` — mehrere Standorte im selben Hub
+* `Backup-Verschlüsselung` — mit `age` oder `gpg`
+* `Metrics Exporter` — Prometheus-Anbindung für historische Traffic-Visualisierung
+* `HA-/Warm-Standby-Modell` — zweiter VPS als Standby
 
 ---
 
@@ -997,83 +839,6 @@ Dieses Projekt steht unter der `MIT License`.
 
 Die vollständigen Lizenzbestimmungen stehen in [LICENSE](LICENSE).
 
-Kurz gesagt:
-
-* Nutzung, Anpassung und Weitergabe sind erlaubt
-* auch kommerzielle Nutzung ist erlaubt
-* der Copyright- und Lizenzhinweis muss erhalten bleiben
-* die Software wird ohne Gewähr bereitgestellt
-
----
-
-# Geplante Features
-
-## WebUI
-
-* Browserbasierte Clientverwaltung
-* QR-Code direkt im Browser
-* Multiuser, Rollen, Audit Logs
-
-## REST API
-
-* Client erstellen / löschen
-* QR-Code abrufen
-* Status abrufen
-* DNS Profile verwalten
-
-## Dockerisierung
-
-* WireGuard Manager Container
-* API Container
-* WebUI Container
-
----
-
-# Mögliche Erweiterungen
-
-* `WebUI mit Rollenmodell` — Browseroberfläche mit Login, Rollen, Audit-Log
-* `REST API` — Automatisierung, externe Integrationen, Mobile-Apps
-* `Tailscale- oder ZeroTier-Fallback` — alternativer Overlay bei blockiertem UDP
-* `AdGuard Home / Pi-hole Integration` — DNS-Profile mit Blocklisten koppeln
-* `GeoIP Blocking` — ergänzend zu CrowdSec und Fail2Ban
-* `VLAN Awareness` — gezielter Zugriff auf Teilnetze
-* `Multi-Gateway Support` — mehrere Standorte im selben Hub
-* `Backup-Verschlüsselung` — mit `age` oder `gpg`
-* `Mehrere Offsite-Ziele` — S3, Hetzner Storage Box, zweiter VPS
-* `Metrics Exporter` — Prometheus-Anbindung
-* `Grafana Dashboard` — historische Traffic- und Backup-Visualisierung
-* `HA- oder Warm-Standby-Modell` — zweiter VPS als Standby
-* `Geräteprofile und Vorlagen` — vordefinierte Profile für iPhone, macOS, IoT
-
----
-
-# Zielplattformen
-
-Clients:
-
-* iPhone
-* iPad
-* macOS
-* Windows
-* Android
-* Linux
-
----
-
-# Projektstatus
-
-```text
-MVP / produktiv nutzbar
-```
-
-Die Infrastruktur läuft bereits produktiv mit:
-
-* CGNAT Bypass
-* VPS Hub
-* Raspberry Gateway
-* Reverse Proxy
-* SSL
-* VPN Clients
-* Monitoring
-* Backups
-* Security Stack
+* Nutzung, Anpassung und Weitergabe sind erlaubt (auch kommerziell)
+* Copyright- und Lizenzhinweis muss erhalten bleiben
+* Die Software wird ohne Gewähr bereitgestellt
