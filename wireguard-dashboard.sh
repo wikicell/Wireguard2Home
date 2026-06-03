@@ -361,15 +361,23 @@ load_aggregate_maps() {
   RX_MAP_NAME="$2"
   TX_MAP_NAME="$3"
 
-  eval "declare -gA $RX_MAP_NAME=()"
-  eval "declare -gA $TX_MAP_NAME=()"
+  # Kein eval – direkte nameref-Zuweisung verhindert Code-Injektion aus der TSV-Datei.
+  declare -gA "$RX_MAP_NAME=()"  2>/dev/null || true
+  declare -gA "$TX_MAP_NAME=()"  2>/dev/null || true
+  declare -n _rx_ref="$RX_MAP_NAME"
+  declare -n _tx_ref="$TX_MAP_NAME"
+  _rx_ref=()
+  _tx_ref=()
 
   [ -f "$FILE_PATH" ] || return
 
   while IFS=$'\t' read -r PUBLIC_KEY RX_BYTES TX_BYTES; do
     [ -z "$PUBLIC_KEY" ] && continue
-    eval "$RX_MAP_NAME[\"\$PUBLIC_KEY\"]=\"$RX_BYTES\""
-    eval "$TX_MAP_NAME[\"\$PUBLIC_KEY\"]=\"$TX_BYTES\""
+    # Nur numerische Byte-Werte akzeptieren – sonst Zeile ueberspringen.
+    [[ "$RX_BYTES" =~ ^[0-9]+$ ]] || continue
+    [[ "$TX_BYTES" =~ ^[0-9]+$ ]] || continue
+    _rx_ref["$PUBLIC_KEY"]="$RX_BYTES"
+    _tx_ref["$PUBLIC_KEY"]="$TX_BYTES"
   done < "$FILE_PATH"
 }
 

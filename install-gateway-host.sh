@@ -415,11 +415,12 @@ update_server_peer_in_conf() {
   local tmp_conf
   tmp_conf="$(mktemp)"
 
-  # Alle bestehenden [Peer]-Bloecke entfernen (Gateway hat genau einen Peer: den VPS)
-  awk '
+  # Nur den [Peer]-Block mit dem bekannten VPS-PublicKey entfernen.
+  # Andere Peers (z. B. manuell hinzugefuegte Road-Warrior) bleiben erhalten.
+  awk -v key="$SERVER_PUBLIC_KEY" '
     BEGIN { RS=""; FS="\n" }
     {
-      if ($0 ~ /\[Peer\]/) { next }
+      if ($0 ~ /\[Peer\]/ && $0 ~ key) { next }
       printf "%s%s", (printed++ ? "\n\n" : ""), $0
     }
     END { if (printed) print "" }

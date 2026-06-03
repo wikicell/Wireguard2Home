@@ -36,6 +36,7 @@ REMOTE_INSTALL_DIR="${WIREGUARD2HOME_REMOTE_INSTALL_DIR:-$REMOTE_SERVICE_HOME}"
 SERVER_PUBLIC_KEY=""
 VPS_BACKUP_PUBLIC_KEY=""
 RASPBERRY_INSTALL_ARGS=()
+VPS_PASSTHROUGH_ARGS=()
 VPS_ENDPOINT_HOST=""
 WG_LISTEN_PORT="51820"
 LAN_SUBNET="192.168.50.0/24"
@@ -333,9 +334,36 @@ parse_args() {
         UPDATE_MODE=1; shift ;;
       --help|-h)
         usage; exit 0 ;;
-      *)
-        log "Option '$1' wird an den jeweiligen Installer (VPS/Gateway) weitergereicht."
+      # VPS-exklusive Flags explizit abfangen und nur an install-vps.sh weiterleiten
+      --with-monitoring|--with-reverse-proxy|--with-docker|--with-ufw-fail2ban|\
+      --with-crowdsec-bouncer|--with-swap|--uptime-tool|--pushover-token|\
+      --pushover-user|--swap-size-mb|--swap-file)
+        VPS_PASSTHROUGH_ARGS+=("$1")
+        if [[ "$1" == --uptime-tool || "$1" == --pushover-token || \
+              "$1" == --pushover-user || "$1" == --swap-size-mb || \
+              "$1" == --swap-file ]]; then
+          VPS_PASSTHROUGH_ARGS+=("$2"); shift
+        fi
+        shift
+        ;;
+      # Gateway-exklusive Flags nur an install-gateway-host.sh weiterleiten
+      --no-masquerade|--masquerade-interface|--gateway-address|\
+      --raspberry-address|--wg-network|--enable-masquerade|\
+      --backup-receive-user|--backup-receive-home|--backup-auth-user|\
+      --backup-auth-home|--authorized-keys-path)
         RASPBERRY_INSTALL_ARGS+=("$1")
+        case "$1" in
+          --masquerade-interface|--backup-receive-user|--backup-receive-home|\
+          --backup-auth-user|--backup-auth-home|--authorized-keys-path|\
+          --gateway-address|--raspberry-address|--wg-network)
+            RASPBERRY_INSTALL_ARGS+=("$2"); shift ;;
+        esac
+        shift
+        ;;
+      *)
+        log "Unbekannte Option '$1' – wird an beide Installer weitergereicht."
+        RASPBERRY_INSTALL_ARGS+=("$1")
+        VPS_PASSTHROUGH_ARGS+=("$1")
         shift
         ;;
     esac
@@ -841,10 +869,12 @@ setup_swap() {
   mkswap "$file" >/dev/null 2>&1 || { log "Fehler: mkswap auf ${file} fehlgeschlagen."; rm -f "$file"; return 1; }
   swapon "$file" || { log "Fehler: swapon auf ${file} fehlgeschlagen."; return 1; }
 
-  if ! grep -qE "^[^#]*[[:space:]]${file}[[:space:]]+none[[:space:]]+swap" /etc/fstab 2>/dev/null \
-     && ! grep -qE "^${file}[[:space:]]" /etc/fstab 2>/dev/null; then
+  # Literal-Suche (fgrep) vermeidet Regex-Metachar-Probleme mit dem Pfad
+  if ! grep -qF "$file" /etc/fstab 2>/dev/null; then
     printf '%s none swap sw 0 0\n' "$file" >> /etc/fstab
     log "Swap dauerhaft in /etc/fstab eingetragen."
+  else
+    log "Swap-Eintrag fuer ${file} bereits in /etc/fstab vorhanden."
   fi
 
   # Etwas konservativere Swap-Nutzung bei wenig RAM
@@ -1844,11 +1874,12 @@ update_server_peer_in_conf() {
   local tmp_conf
   tmp_conf="$(mktemp)"
 
-  # Alle bestehenden [Peer]-Bloecke entfernen (Gateway hat genau einen Peer: den VPS)
-  awk '
+  # Nur den [Peer]-Block mit dem bekannten VPS-PublicKey entfernen.
+  # Andere Peers (z. B. manuell hinzugefuegte Road-Warrior) bleiben erhalten.
+  awk -v key="$SERVER_PUBLIC_KEY" '
     BEGIN { RS=""; FS="\n" }
     {
-      if ($0 ~ /\[Peer\]/) { next }
+      if ($0 ~ /\[Peer\]/ && $0 ~ key) { next }
       printf "%s%s", (printed++ ? "\n\n" : ""), $0
     }
     END { if (printed) print "" }
@@ -3382,14 +3413,21 @@ dashboard_load_aggregate_maps() {
   RX_MAP_NAME="$2"
   TX_MAP_NAME="$3"
 
-  eval "declare -gA $RX_MAP_NAME=()"
-  eval "declare -gA $TX_MAP_NAME=()"
+  # Kein eval – nameref verhindert Code-Injektion aus der TSV-Statusdatei.
+  declare -gA "$RX_MAP_NAME=()" 2>/dev/null || true
+  declare -gA "$TX_MAP_NAME=()" 2>/dev/null || true
+  declare -n _drx_ref="$RX_MAP_NAME"
+  declare -n _dtx_ref="$TX_MAP_NAME"
+  _drx_ref=()
+  _dtx_ref=()
   [ -f "$FILE_PATH" ] || return
 
   while IFS=$'\t' read -r PUBLIC_KEY RX_BYTES TX_BYTES; do
     [ -z "$PUBLIC_KEY" ] && continue
-    eval "$RX_MAP_NAME[\"\$PUBLIC_KEY\"]=\"$RX_BYTES\""
-    eval "$TX_MAP_NAME[\"\$PUBLIC_KEY\"]=\"$TX_BYTES\""
+    [[ "$RX_BYTES" =~ ^[0-9]+$ ]] || continue
+    [[ "$TX_BYTES" =~ ^[0-9]+$ ]] || continue
+    _drx_ref["$PUBLIC_KEY"]="$RX_BYTES"
+    _dtx_ref["$PUBLIC_KEY"]="$TX_BYTES"
   done < "$FILE_PATH"
 }
 
@@ -3904,12 +3942,24 @@ backup_execute() {
     "$BACKUP_FILE" \
     "$RPI_USER@$RPI_HOST:$RPI_TARGET/"
 
+  # Sicherstellen dass RPI_KEEP_COUNT und RPI_KEEP_DAYS numerisch sind
+  if ! [[ "${RPI_KEEP_COUNT:-}" =~ ^[0-9]+$ ]] || [ "${RPI_KEEP_COUNT:-0}" -lt 1 ]; then
+    log "Warnung: RPI_KEEP_COUNT='${RPI_KEEP_COUNT:-}' ist kein gueltiger Wert – benutze Standardwert 60."
+    RPI_KEEP_COUNT=60
+  fi
+  if ! [[ "${RPI_KEEP_DAYS:-}" =~ ^[0-9]+$ ]] || [ "${RPI_KEEP_DAYS:-0}" -lt 1 ]; then
+    log "Warnung: RPI_KEEP_DAYS='${RPI_KEEP_DAYS:-}' ist kein gueltiger Wert – benutze Standardwert 30."
+    RPI_KEEP_DAYS=30
+  fi
+
   echo ""
   echo "Bereinige Raspberry-Backups..."
+  local _keep_count="$RPI_KEEP_COUNT"
+  local _keep_days="$RPI_KEEP_DAYS"
   ssh -i "$SSH_KEY" "$RPI_USER@$RPI_HOST" "
 mkdir -p '$RPI_TARGET'
-find '$RPI_TARGET' -type f -name 'gate2home-backup-*.tar.gz' -mtime +$RPI_KEEP_DAYS -delete
-find '$RPI_TARGET' -maxdepth 1 -type f -name 'gate2home-backup-*.tar.gz' -printf '%T@ %p\n' | sort -rn | awk 'NR > $RPI_KEEP_COUNT { \$1=\"\"; sub(/^ /, \"\"); print }' | while IFS= read -r old_file; do
+find '$RPI_TARGET' -type f -name 'gate2home-backup-*.tar.gz' -mtime +${_keep_days} -delete
+find '$RPI_TARGET' -maxdepth 1 -type f -name 'gate2home-backup-*.tar.gz' -printf '%T@ %p\n' | sort -rn | awk 'NR > ${_keep_count} { \$1=\"\"; sub(/^ /, \"\"); print }' | while IFS= read -r old_file; do
   rm -f \"\$old_file\"
 done
 "
@@ -4659,15 +4709,23 @@ load_aggregate_maps() {
   RX_MAP_NAME="$2"
   TX_MAP_NAME="$3"
 
-  eval "declare -gA $RX_MAP_NAME=()"
-  eval "declare -gA $TX_MAP_NAME=()"
+  # Kein eval – direkte nameref-Zuweisung verhindert Code-Injektion aus der TSV-Datei.
+  declare -gA "$RX_MAP_NAME=()"  2>/dev/null || true
+  declare -gA "$TX_MAP_NAME=()"  2>/dev/null || true
+  declare -n _rx_ref="$RX_MAP_NAME"
+  declare -n _tx_ref="$TX_MAP_NAME"
+  _rx_ref=()
+  _tx_ref=()
 
   [ -f "$FILE_PATH" ] || return
 
   while IFS=$'\t' read -r PUBLIC_KEY RX_BYTES TX_BYTES; do
     [ -z "$PUBLIC_KEY" ] && continue
-    eval "$RX_MAP_NAME[\"\$PUBLIC_KEY\"]=\"$RX_BYTES\""
-    eval "$TX_MAP_NAME[\"\$PUBLIC_KEY\"]=\"$TX_BYTES\""
+    # Nur numerische Byte-Werte akzeptieren – sonst Zeile ueberspringen.
+    [[ "$RX_BYTES" =~ ^[0-9]+$ ]] || continue
+    [[ "$TX_BYTES" =~ ^[0-9]+$ ]] || continue
+    _rx_ref["$PUBLIC_KEY"]="$RX_BYTES"
+    _tx_ref["$PUBLIC_KEY"]="$TX_BYTES"
   done < "$FILE_PATH"
 }
 
@@ -5224,17 +5282,31 @@ restore_wg_conf() {
   fi
 }
 
+reload_wg_live() {
+  # Wendet die neue wg0.conf live an ohne bestehende Tunnel zu unterbrechen.
+  # wg syncconf erfordert wg-quick strip (entfernt PostUp/PostDown), da
+  # syncconf nur [Interface]/[Peer]-Direktiven akzeptiert.
+  if command -v wg-quick >/dev/null 2>&1 && wg show "$WG_IFACE" >/dev/null 2>&1; then
+    if wg syncconf "$WG_IFACE" <(wg-quick strip "$WG_IFACE" 2>/dev/null) 2>/dev/null; then
+      return 0
+    fi
+  fi
+  # Fallback: vollstaendiger Neustart (unterbricht aktive Sessions)
+  log "wg syncconf nicht moeglich – falle zurueck auf systemctl restart."
+  systemctl restart "wg-quick@$WG_IFACE"
+}
+
 restart_wg_with_rollback() {
   BACKUP_FILE="$1"
   CLIENT_CONF_TO_DELETE="${2:-}"
   CLIENT_QR_TO_DELETE="${3:-}"
 
-  if systemctl restart "wg-quick@$WG_IFACE"; then
+  if reload_wg_live; then
     return 0
   fi
 
   echo ""
-  echo "Fehler: Neustart von wg-quick@$WG_IFACE fehlgeschlagen."
+  echo "Fehler: WireGuard-Reload fehlgeschlagen."
   echo "Stelle letzte Sicherung wieder her: $BACKUP_FILE"
 
   restore_wg_conf "$BACKUP_FILE"
@@ -5852,6 +5924,16 @@ create_client() {
   check_base_files
   require_wg_running
 
+  # Exklusives Lock waehrend der gesamten Client-Erstellung verhindern,
+  # dass zwei gleichzeitige Aufrufe dieselbe IP vergeben.
+  local _lock_fd _lock_file="${WG_DIR}/.wg-client-create.lock"
+  exec {_lock_fd}>"$_lock_file"
+  if ! flock -n "$_lock_fd" 2>/dev/null; then
+    echo "Fehler: Ein anderer Client-Erstellungsprozess laeuft gerade. Bitte warten."
+    exit 1
+  fi
+  trap 'flock -u "$_lock_fd"; exec {_lock_fd}>&-' EXIT
+
   echo ""
   echo "Suche nächste freie WireGuard-IP..."
 
@@ -6465,6 +6547,13 @@ prepare_restore() {
 
   mkdir -p "$RESTORE_WORKDIR"
 
+  echo "Pruefe Archiv-Integritaet..."
+  if ! tar -tzf "$BACKUP_FILE" > /dev/null 2>&1; then
+    echo "Fehler: Backup-Archiv ist beschaedigt oder unvollstaendig: $BACKUP_FILE"
+    echo "Kein Restore durchgefuehrt – bestehende Daten sind unveraendert."
+    exit 1
+  fi
+
   if ! tar -xzf "$BACKUP_FILE" -C "$RESTORE_WORKDIR"; then
     echo "Fehler: Backup konnte nicht entpackt werden."
     exit 1
@@ -6830,8 +6919,13 @@ show_install_plan() {
 # ──────────────────────────────────────────────────────────────────────────────
 
 run_vps_installer_remote() {
-  local ssh_cmd vps_cmd
+  local ssh_cmd vps_cmd extra_args=""
   ssh_cmd="$(build_ssh_cmd)"
+  # VPS_PASSTHROUGH_ARGS (--with-monitoring etc.) an den Remote-Installer weiterleiten
+  local arg
+  for arg in ${VPS_PASSTHROUGH_ARGS[@]+"${VPS_PASSTHROUGH_ARGS[@]}"}; do
+    extra_args+=" $(shell_escape "$arg")"
+  done
   vps_cmd="$(shell_escape "$REMOTE_INSTALL_DIR/install-vps.sh") \
     --service-user $(shell_escape "$REMOTE_SERVICE_USER") \
     --service-home $(shell_escape "$REMOTE_SERVICE_HOME") \
@@ -6840,7 +6934,7 @@ run_vps_installer_remote() {
     --dns-home-label $(shell_escape "$DNS_HOME_LABEL") \
     --dns-home-value $(shell_escape "$DNS_HOME_VALUE") \
     --dns-router-label $(shell_escape "$DNS_ROUTER_LABEL") \
-    --dns-router-value $(shell_escape "$DNS_ROUTER_VALUE")"
+    --dns-router-value $(shell_escape "$DNS_ROUTER_VALUE")${extra_args}"
   $ssh_cmd "$VPS_HOST" "$vps_cmd"
 }
 
@@ -6890,6 +6984,10 @@ if [ ! -f "$WG_CONF" ]; then
   exit 1
 fi
 
+# CRLF-Normalisierung: Windows-Zeilenenden brechen awk RS="" Paragraph-Mode.
+tmp_normalized="$(mktemp)"
+tr -d '\r' < "$WG_CONF" > "$tmp_normalized"
+
 # Vorhandenen [Peer]-Block mit gleichem PublicKey entfernen (idempotent)
 tmp_conf="$(mktemp)"
 awk -v key="$pubkey" '
@@ -6899,7 +6997,8 @@ awk -v key="$pubkey" '
     printf "%s%s", (printed++ ? "\n\n" : ""), $0
   }
   END { if (printed) print "" }
-' "$WG_CONF" > "$tmp_conf"
+' "$tmp_normalized" > "$tmp_conf"
+rm -f "$tmp_normalized"
 
 # Neuen Peer-Block anhaengen
 {
@@ -6949,7 +7048,7 @@ install_vps_local() {
     --dns-home-value "$DNS_HOME_VALUE" \
     --dns-router-label "$DNS_ROUTER_LABEL" \
     --dns-router-value "$DNS_ROUTER_VALUE" \
-    ${RASPBERRY_INSTALL_ARGS[@]+"${RASPBERRY_INSTALL_ARGS[@]}"}
+    ${VPS_PASSTHROUGH_ARGS[@]+"${VPS_PASSTHROUGH_ARGS[@]}"}
 
   local active_server_key=""
   local backup_key=""
@@ -7045,7 +7144,7 @@ install_gateway_local_and_vps_remote() {
 # Update mode: refresh deployed runtime scripts (keeps config & keys)
 # ──────────────────────────────────────────────────────────────────────────────
 
-UPDATE_SCRIPT_SET="runtime-paths.sh Wireguard2Home.sh wireguard-dashboard.sh create-wg-client.sh backup-wireguard2home.sh restore-wireguard2home.sh"
+UPDATE_SCRIPT_SET="runtime-paths.sh install-vps.sh install-gateway-host.sh Wireguard2Home.sh wireguard-dashboard.sh create-wg-client.sh backup-wireguard2home.sh restore-wireguard2home.sh"
 
 run_update_local() {
   log "Aktualisiere Runtime-Skripte in ${SERVICE_HOME} ..."
@@ -7060,12 +7159,14 @@ run_update_local() {
 run_update_remote_vps() {
   ensure_ssh_client
   ssh_mux_start
-  trap 'ssh_mux_stop' EXIT
   echo ""
   echo "Hinweis: Falls noch kein SSH-Key auf dem VPS liegt, wirst du einmal nach dem Passwort gefragt."
 
   local tmp_dir
   tmp_dir="$(mktemp -d)"
+  # Cleanup-Trap: tmp-Dateien auch bei scp-Fehler entfernen
+  trap 'rm -rf "$tmp_dir"; ssh_mux_stop' EXIT
+
   local ssh_cmd scp_cmd name
   ssh_cmd="$(build_ssh_cmd)"
   scp_cmd="$(build_scp_cmd)"
@@ -7076,15 +7177,25 @@ run_update_remote_vps() {
 
   log "Lade aktualisierte Skripte auf den VPS (${REMOTE_SERVICE_HOME}) ..."
   $ssh_cmd "$VPS_HOST" "mkdir -p $(shell_escape "$REMOTE_SERVICE_HOME")"
+  local failed=0
   for name in $UPDATE_SCRIPT_SET; do
-    $scp_cmd "${tmp_dir}/${name}" "${VPS_HOST}:${REMOTE_SERVICE_HOME}/${name}"
+    if ! $scp_cmd "${tmp_dir}/${name}" "${VPS_HOST}:${REMOTE_SERVICE_HOME}/${name}"; then
+      log "Warnung: Upload von ${name} fehlgeschlagen – Update abgebrochen."
+      failed=1
+      break
+    fi
   done
   $ssh_cmd "$VPS_HOST" "chmod 700 $(shell_escape "$REMOTE_SERVICE_HOME")/Wireguard2Home.sh 2>/dev/null || true"
 
   rm -rf "$tmp_dir"
-  ssh_mux_stop
   trap - EXIT
-  log "VPS-Skripte aktualisiert."
+  ssh_mux_stop
+
+  if [ "$failed" -eq 1 ]; then
+    log "VPS-Update unvollstaendig – bitte erneut ausfuehren."
+    return 1
+  fi
+  log "VPS-Skripte aktualisiert (inkl. install-vps.sh und install-gateway-host.sh)."
 }
 
 run_update() {

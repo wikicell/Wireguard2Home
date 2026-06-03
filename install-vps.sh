@@ -423,10 +423,12 @@ setup_swap() {
   mkswap "$file" >/dev/null 2>&1 || { log "Fehler: mkswap auf ${file} fehlgeschlagen."; rm -f "$file"; return 1; }
   swapon "$file" || { log "Fehler: swapon auf ${file} fehlgeschlagen."; return 1; }
 
-  if ! grep -qE "^[^#]*[[:space:]]${file}[[:space:]]+none[[:space:]]+swap" /etc/fstab 2>/dev/null \
-     && ! grep -qE "^${file}[[:space:]]" /etc/fstab 2>/dev/null; then
+  # Literal-Suche (fgrep) vermeidet Regex-Metachar-Probleme mit dem Pfad
+  if ! grep -qF "$file" /etc/fstab 2>/dev/null; then
     printf '%s none swap sw 0 0\n' "$file" >> /etc/fstab
     log "Swap dauerhaft in /etc/fstab eingetragen."
+  else
+    log "Swap-Eintrag fuer ${file} bereits in /etc/fstab vorhanden."
   fi
 
   # Etwas konservativere Swap-Nutzung bei wenig RAM

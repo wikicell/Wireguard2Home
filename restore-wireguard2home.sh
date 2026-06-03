@@ -155,6 +155,13 @@ prepare_restore() {
 
   mkdir -p "$RESTORE_WORKDIR"
 
+  echo "Pruefe Archiv-Integritaet..."
+  if ! tar -tzf "$BACKUP_FILE" > /dev/null 2>&1; then
+    echo "Fehler: Backup-Archiv ist beschaedigt oder unvollstaendig: $BACKUP_FILE"
+    echo "Kein Restore durchgefuehrt – bestehende Daten sind unveraendert."
+    exit 1
+  fi
+
   if ! tar -xzf "$BACKUP_FILE" -C "$RESTORE_WORKDIR"; then
     echo "Fehler: Backup konnte nicht entpackt werden."
     exit 1

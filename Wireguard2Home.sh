@@ -1358,14 +1358,21 @@ dashboard_load_aggregate_maps() {
   RX_MAP_NAME="$2"
   TX_MAP_NAME="$3"
 
-  eval "declare -gA $RX_MAP_NAME=()"
-  eval "declare -gA $TX_MAP_NAME=()"
+  # Kein eval – nameref verhindert Code-Injektion aus der TSV-Statusdatei.
+  declare -gA "$RX_MAP_NAME=()" 2>/dev/null || true
+  declare -gA "$TX_MAP_NAME=()" 2>/dev/null || true
+  declare -n _drx_ref="$RX_MAP_NAME"
+  declare -n _dtx_ref="$TX_MAP_NAME"
+  _drx_ref=()
+  _dtx_ref=()
   [ -f "$FILE_PATH" ] || return
 
   while IFS=$'\t' read -r PUBLIC_KEY RX_BYTES TX_BYTES; do
     [ -z "$PUBLIC_KEY" ] && continue
-    eval "$RX_MAP_NAME[\"\$PUBLIC_KEY\"]=\"$RX_BYTES\""
-    eval "$TX_MAP_NAME[\"\$PUBLIC_KEY\"]=\"$TX_BYTES\""
+    [[ "$RX_BYTES" =~ ^[0-9]+$ ]] || continue
+    [[ "$TX_BYTES" =~ ^[0-9]+$ ]] || continue
+    _drx_ref["$PUBLIC_KEY"]="$RX_BYTES"
+    _dtx_ref["$PUBLIC_KEY"]="$TX_BYTES"
   done < "$FILE_PATH"
 }
 
@@ -1880,12 +1887,24 @@ backup_execute() {
     "$BACKUP_FILE" \
     "$RPI_USER@$RPI_HOST:$RPI_TARGET/"
 
+  # Sicherstellen dass RPI_KEEP_COUNT und RPI_KEEP_DAYS numerisch sind
+  if ! [[ "${RPI_KEEP_COUNT:-}" =~ ^[0-9]+$ ]] || [ "${RPI_KEEP_COUNT:-0}" -lt 1 ]; then
+    log "Warnung: RPI_KEEP_COUNT='${RPI_KEEP_COUNT:-}' ist kein gueltiger Wert – benutze Standardwert 60."
+    RPI_KEEP_COUNT=60
+  fi
+  if ! [[ "${RPI_KEEP_DAYS:-}" =~ ^[0-9]+$ ]] || [ "${RPI_KEEP_DAYS:-0}" -lt 1 ]; then
+    log "Warnung: RPI_KEEP_DAYS='${RPI_KEEP_DAYS:-}' ist kein gueltiger Wert – benutze Standardwert 30."
+    RPI_KEEP_DAYS=30
+  fi
+
   echo ""
   echo "Bereinige Raspberry-Backups..."
+  local _keep_count="$RPI_KEEP_COUNT"
+  local _keep_days="$RPI_KEEP_DAYS"
   ssh -i "$SSH_KEY" "$RPI_USER@$RPI_HOST" "
 mkdir -p '$RPI_TARGET'
-find '$RPI_TARGET' -type f -name 'gate2home-backup-*.tar.gz' -mtime +$RPI_KEEP_DAYS -delete
-find '$RPI_TARGET' -maxdepth 1 -type f -name 'gate2home-backup-*.tar.gz' -printf '%T@ %p\n' | sort -rn | awk 'NR > $RPI_KEEP_COUNT { \$1=\"\"; sub(/^ /, \"\"); print }' | while IFS= read -r old_file; do
+find '$RPI_TARGET' -type f -name 'gate2home-backup-*.tar.gz' -mtime +${_keep_days} -delete
+find '$RPI_TARGET' -maxdepth 1 -type f -name 'gate2home-backup-*.tar.gz' -printf '%T@ %p\n' | sort -rn | awk 'NR > ${_keep_count} { \$1=\"\"; sub(/^ /, \"\"); print }' | while IFS= read -r old_file; do
   rm -f \"\$old_file\"
 done
 "

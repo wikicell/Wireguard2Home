@@ -47,17 +47,31 @@ restore_wg_conf() {
   fi
 }
 
+reload_wg_live() {
+  # Wendet die neue wg0.conf live an ohne bestehende Tunnel zu unterbrechen.
+  # wg syncconf erfordert wg-quick strip (entfernt PostUp/PostDown), da
+  # syncconf nur [Interface]/[Peer]-Direktiven akzeptiert.
+  if command -v wg-quick >/dev/null 2>&1 && wg show "$WG_IFACE" >/dev/null 2>&1; then
+    if wg syncconf "$WG_IFACE" <(wg-quick strip "$WG_IFACE" 2>/dev/null) 2>/dev/null; then
+      return 0
+    fi
+  fi
+  # Fallback: vollstaendiger Neustart (unterbricht aktive Sessions)
+  log "wg syncconf nicht moeglich – falle zurueck auf systemctl restart."
+  systemctl restart "wg-quick@$WG_IFACE"
+}
+
 restart_wg_with_rollback() {
   BACKUP_FILE="$1"
   CLIENT_CONF_TO_DELETE="${2:-}"
   CLIENT_QR_TO_DELETE="${3:-}"
 
-  if systemctl restart "wg-quick@$WG_IFACE"; then
+  if reload_wg_live; then
     return 0
   fi
 
   echo ""
-  echo "Fehler: Neustart von wg-quick@$WG_IFACE fehlgeschlagen."
+  echo "Fehler: WireGuard-Reload fehlgeschlagen."
   echo "Stelle letzte Sicherung wieder her: $BACKUP_FILE"
 
   restore_wg_conf "$BACKUP_FILE"
@@ -674,6 +688,16 @@ show_help() {
 create_client() {
   check_base_files
   require_wg_running
+
+  # Exklusives Lock waehrend der gesamten Client-Erstellung verhindern,
+  # dass zwei gleichzeitige Aufrufe dieselbe IP vergeben.
+  local _lock_fd _lock_file="${WG_DIR}/.wg-client-create.lock"
+  exec {_lock_fd}>"$_lock_file"
+  if ! flock -n "$_lock_fd" 2>/dev/null; then
+    echo "Fehler: Ein anderer Client-Erstellungsprozess laeuft gerade. Bitte warten."
+    exit 1
+  fi
+  trap 'flock -u "$_lock_fd"; exec {_lock_fd}>&-' EXIT
 
   echo ""
   echo "Suche nächste freie WireGuard-IP..."
