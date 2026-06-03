@@ -751,6 +751,18 @@ networks:
 
 **In NPM:** Forward Hostname `statping-ng` (Container-Name), Port `8080`.
 
+**Erster Zugriff / Zugangsdaten Statping-NG:**
+
+Statping-NG hat keine festen Standard-Zugangsdaten. Beim ersten Aufruf der
+URL erscheint ein Setup-Assistent unter `/setup`:
+
+1. Datenbanktyp wählen (SQLite = Standard, keine weitere Konfiguration nötig)
+2. Seiten-Name, Beschreibung und Sprache festlegen
+3. **Admin-Benutzername und Passwort selbst wählen** — diese gelten ab sofort
+
+→ Den Setup-Assistenten sofort nach dem ersten Start durchlaufen, bevor
+die Domain öffentlich erreichbar ist.
+
 ### Uptime Kuma — `/opt/uptime-kuma/docker-compose.yml` (`--uptime-tool kuma`)
 
 Intern orientiertes Monitoring ohne öffentliche Status-Seiten-Funktion.
@@ -775,6 +787,16 @@ networks:
 ```
 
 > **In NPM:** Forward Hostname `uptime-kuma`, Port `3001`.
+
+**Erster Zugriff / Zugangsdaten Uptime Kuma:**
+
+Uptime Kuma hat ebenfalls keine festen Standard-Zugangsdaten. Beim ersten
+Aufruf von `http://uptime-kuma-domain` erscheint direkt die Registrierung:
+
+1. **Benutzername und Passwort selbst wählen** — es gibt nur einen Admin-Account
+2. Danach sofort einloggen und Services einrichten
+
+→ Auch hier: Setup vor der öffentlichen DNS-Freischaltung abschließen.
 
 ### Watchtower — `/opt/watchtower/docker-compose.yml`
 
