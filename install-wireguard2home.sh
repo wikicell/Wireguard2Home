@@ -1542,7 +1542,7 @@ SERVER_PUBLIC_KEY=""
 BACKUP_RECEIVE_DIR="${WIREGUARD2HOME_BACKUP_RECEIVE_DIR:-${BACKUP_RECEIVE_HOME}/backups/from-vps}"
 BACKUP_AUTH_KEYS_PATH="${WIREGUARD2HOME_BACKUP_AUTHORIZED_KEYS_PATH:-${BACKUP_AUTH_HOME}/.ssh/authorized_keys}"
 VPS_BACKUP_PUBLIC_KEY=""
-ENABLE_MASQUERADE=0
+ENABLE_MASQUERADE=1
 MASQUERADE_INTERFACE=""
 
 usage() {
@@ -1567,8 +1567,8 @@ Optionen:
   --server-endpoint HOST:PORT   VPS Endpoint (Standard: ${SERVER_ENDPOINT})
   --server-public-key KEY       Public Key des VPS
   --vps-backup-public-key KEY   Public Key fuer VPS-Backupzugriff
-  --enable-masquerade           NAT/Masquerade Regeln in wg0.conf Template eintragen
-  --masquerade-interface IFACE  Interface fuer Masquerade, z. B. eth0
+  --no-masquerade               NAT/Masquerade deaktivieren (Standard: aktiv, wird automatisch erkannt)
+  --masquerade-interface IFACE  LAN-Interface fuer Masquerade manuell angeben (Standard: automatisch)
   --help                        Diese Hilfe anzeigen
 EOF
 }
@@ -1679,6 +1679,10 @@ parse_args() {
         ;;
       --enable-masquerade)
         ENABLE_MASQUERADE=1
+        shift
+        ;;
+      --no-masquerade)
+        ENABLE_MASQUERADE=0
         shift
         ;;
       --masquerade-interface)
@@ -1854,17 +1858,47 @@ install_vps_backup_key() {
   fi
 }
 
+detect_lan_interface() {
+  # Ermittelt das ausgehende LAN-Interface automatisch ueber die Default-Route.
+  # Ergebnis: Interface-Name (z. B. eth0, ens18, wlan0) oder leer bei Fehler.
+  ip route show default 2>/dev/null | awk '/default/ {print $5; exit}'
+}
+
 write_nat_lines() {
-  if [ "$ENABLE_MASQUERADE" -eq 1 ] && [ -n "$MASQUERADE_INTERFACE" ]; then
-    if ! command -v iptables >/dev/null 2>&1; then
-      log "Hinweis: iptables ist auf diesem System nicht verfuegbar. NAT-Zeilen werden nicht automatisch eingetragen."
-      return
-    fi
+  if [ "$ENABLE_MASQUERADE" -ne 1 ]; then
+    return
+  fi
+
+  # Interface automatisch ermitteln wenn nicht manuell angegeben
+  if [ -z "$MASQUERADE_INTERFACE" ]; then
+    MASQUERADE_INTERFACE="$(detect_lan_interface)"
+  fi
+
+  if [ -z "$MASQUERADE_INTERFACE" ]; then
+    log "Warnung: LAN-Interface konnte nicht automatisch erkannt werden."
+    log "Masquerade-Regeln werden als Kommentar eingetragen."
+    log "Bitte nach der Installation manuell setzen oder --masquerade-interface angeben."
     cat <<EOF
+# PostUp = iptables -A FORWARD -i ${WG_IFACE} -j ACCEPT; iptables -t nat -A POSTROUTING -s ${WG_NETWORK_CIDR} -o IFACE -j MASQUERADE
+# PostDown = iptables -D FORWARD -i ${WG_IFACE} -j ACCEPT; iptables -t nat -D POSTROUTING -s ${WG_NETWORK_CIDR} -o IFACE -j MASQUERADE
+EOF
+    return
+  fi
+
+  if ! command -v iptables >/dev/null 2>&1; then
+    log "Hinweis: iptables nicht verfuegbar. NAT-Zeilen werden als Kommentar eingetragen."
+    cat <<EOF
+# PostUp = iptables -A FORWARD -i ${WG_IFACE} -j ACCEPT; iptables -t nat -A POSTROUTING -s ${WG_NETWORK_CIDR} -o ${MASQUERADE_INTERFACE} -j MASQUERADE
+# PostDown = iptables -D FORWARD -i ${WG_IFACE} -j ACCEPT; iptables -t nat -D POSTROUTING -s ${WG_NETWORK_CIDR} -o ${MASQUERADE_INTERFACE} -j MASQUERADE
+EOF
+    return
+  fi
+
+  log "Masquerade-Interface erkannt: ${MASQUERADE_INTERFACE}"
+  cat <<EOF
 PostUp = iptables -A FORWARD -i ${WG_IFACE} -j ACCEPT; iptables -t nat -A POSTROUTING -s ${WG_NETWORK_CIDR} -o ${MASQUERADE_INTERFACE} -j MASQUERADE
 PostDown = iptables -D FORWARD -i ${WG_IFACE} -j ACCEPT; iptables -t nat -D POSTROUTING -s ${WG_NETWORK_CIDR} -o ${MASQUERADE_INTERFACE} -j MASQUERADE
 EOF
-  fi
 }
 
 update_server_peer_in_conf() {
@@ -1899,6 +1933,21 @@ update_server_peer_in_conf() {
     echo "AllowedIPs = ${WG_NETWORK_CIDR}"
     echo "PersistentKeepalive = 25"
   } >> "$tmp_conf"
+
+  # Masquerade-Regeln nachrüsten falls noch nicht vorhanden
+  local nat_lines=""
+  nat_lines="$(write_nat_lines || true)"
+  if [ -n "$nat_lines" ]; then
+    if ! grep -q "^PostUp" "$tmp_conf" 2>/dev/null; then
+      # Masquerade-Zeilen nach der Address-Zeile im [Interface]-Block einfügen
+      awk -v nat="$nat_lines" '
+        /^Address/ { print; print nat; next }
+        { print }
+      ' "$tmp_conf" > "${tmp_conf}.nat"
+      mv "${tmp_conf}.nat" "$tmp_conf"
+      log "Masquerade-Regeln in bestehende ${WG_CONF} eingetragen."
+    fi
+  fi
 
   install -m 600 "$tmp_conf" "$WG_CONF"
   rm -f "$tmp_conf"
@@ -2024,11 +2073,6 @@ main() {
   parse_args "$@"
   require_root
   detect_platform
-
-  if [ "$ENABLE_MASQUERADE" -eq 1 ] && [ -z "$MASQUERADE_INTERFACE" ]; then
-    echo "Fehler: --enable-masquerade benoetigt --masquerade-interface."
-    exit 1
-  fi
 
   install_packages
   ensure_dir "$WG_DIR" 700

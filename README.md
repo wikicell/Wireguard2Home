@@ -520,14 +520,30 @@ Unterstützte Distributionen:
 | VM mit systemd | Gut unterstützt |
 | VM ohne systemd | Teilweise — Dienste manuell starten |
 
-Beispiel mit NAT/Masquerade:
+**NAT/Masquerade ist standardmäßig aktiv** — das LAN-Interface wird automatisch
+über die Default-Route erkannt (`ip route show default`). Das ist eine
+Grundvoraussetzung für den Heimnetz-Zugriff vom VPS und von Clients aus.
+
+> Ohne Masquerade landen Pakete zwar am Heimnetz-Gerät, aber die Antwort
+> findet keinen Weg zurück (das Heimgerät kennt `10.100.0.0/24` nicht).
 
 ```bash
+# Standard — Masquerade automatisch aktiv:
+sudo ./install-gateway-host.sh \
+  --server-public-key "VPS_PUBLIC_KEY" \
+  --vps-backup-public-key "VPS_BACKUP_PUBLIC_KEY"
+
+# Interface manuell angeben (falls Auto-Detection fehlschlägt):
 sudo ./install-gateway-host.sh \
   --server-public-key "VPS_PUBLIC_KEY" \
   --vps-backup-public-key "VPS_BACKUP_PUBLIC_KEY" \
-  --enable-masquerade \
   --masquerade-interface eth0
+
+# Masquerade deaktivieren (nur wenn Router statische Routen kennt):
+sudo ./install-gateway-host.sh \
+  --server-public-key "VPS_PUBLIC_KEY" \
+  --vps-backup-public-key "VPS_BACKUP_PUBLIC_KEY" \
+  --no-masquerade
 ```
 
 ### Installationsoptionen
@@ -539,8 +555,8 @@ sudo ./install-gateway-host.sh \
 * `--server-endpoint HOST:PORT` — WireGuard-Endpoint des VPS
 * `--server-public-key KEY` — WireGuard-Public-Key des VPS
 * `--vps-backup-public-key KEY` — SSH-Public-Key des VPS für Backup-Zugriff
-* `--enable-masquerade` — NAT/Masquerade in wg0.conf-Template
-* `--masquerade-interface IFACE` — ausgehendes Interface für NAT (z. B. eth0)
+* `--masquerade-interface IFACE` — LAN-Interface für NAT manuell angeben (Standard: automatisch)
+* `--no-masquerade` — Masquerade deaktivieren (Standard: aktiv)
 
 ### Gateway-Host Public Key
 
