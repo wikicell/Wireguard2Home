@@ -238,9 +238,18 @@ ask_infra_config_if_needed() {
     if [ "$ROLE" = "gateway" ] && [ -n "$VPS_HOST" ]; then
       VPS_ENDPOINT_HOST="${VPS_HOST##*@}"
     else
+      # IPv4 bevorzugt; IPv6 nur als Fallback
       local _detected_ip=""
       if command -v curl >/dev/null 2>&1; then
-        _detected_ip="$(curl -s --max-time 5 https://ifconfig.me 2>/dev/null || true)"
+        _detected_ip="$(curl -4 -s --max-time 5 https://ifconfig.me 2>/dev/null || true)"
+        if [ -z "$_detected_ip" ]; then
+          _detected_ip="$(curl -6 -s --max-time 5 https://ifconfig.me 2>/dev/null || true)"
+        fi
+      elif command -v wget >/dev/null 2>&1; then
+        _detected_ip="$(wget -4 -qO- --timeout=5 https://ifconfig.me 2>/dev/null || true)"
+        if [ -z "$_detected_ip" ]; then
+          _detected_ip="$(wget -6 -qO- --timeout=5 https://ifconfig.me 2>/dev/null || true)"
+        fi
       fi
       echo ""
       read -r -p "Oeffentlicher Hostname oder IP des VPS fuer WireGuard-Endpoint [${_detected_ip:-vpn.example.com}]: " _input

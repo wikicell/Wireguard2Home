@@ -336,13 +336,20 @@ prompt_runtime_defaults() {
 
   echo ""
 
-  # Endpoint: oeffentliche IP/Hostname des VPS fuer Client-Configs
+  # Endpoint: oeffentliche IP/Hostname des VPS fuer Client-Configs.
+  # IPv4 wird bevorzugt; nur wenn keine IPv4 erreichbar ist, wird IPv6 genutzt.
   if [ -z "$WG_ENDPOINT" ]; then
     local _detected_ip=""
     if command -v curl >/dev/null 2>&1; then
-      _detected_ip="$(curl -s --max-time 5 https://ifconfig.me 2>/dev/null || true)"
+      _detected_ip="$(curl -4 -s --max-time 5 https://ifconfig.me 2>/dev/null || true)"
+      if [ -z "$_detected_ip" ]; then
+        _detected_ip="$(curl -6 -s --max-time 5 https://ifconfig.me 2>/dev/null || true)"
+      fi
     elif command -v wget >/dev/null 2>&1; then
-      _detected_ip="$(wget -qO- --timeout=5 https://ifconfig.me 2>/dev/null || true)"
+      _detected_ip="$(wget -4 -qO- --timeout=5 https://ifconfig.me 2>/dev/null || true)"
+      if [ -z "$_detected_ip" ]; then
+        _detected_ip="$(wget -6 -qO- --timeout=5 https://ifconfig.me 2>/dev/null || true)"
+      fi
     fi
     local _default_endpoint="${_detected_ip:-vpn.example.com}:${WG_LISTEN_PORT}"
     echo "Oeffentlicher WireGuard-Endpunkt (wird in Client-Configs als 'Endpoint' eingetragen)."
