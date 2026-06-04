@@ -4373,7 +4373,42 @@ main_menu() {
   done
 }
 
+validate_endpoint() {
+  # Platzhalter-Endpoint erkennen und korrigieren bevor Clients erstellt werden.
+  # ENDPOINT wird in dieser Shell-Instanz aktualisiert UND dauerhaft in die Config geschrieben.
+  [ "${ENDPOINT%%:*}" = "vpn.example.com" ] || return 0
+
+  local _cfg="${WIREGUARD2HOME_CONFIG_FILE:-/etc/wireguard2home.conf}"
+  echo ""
+  echo "⚠️  Der WireGuard-Endpoint ist noch auf den Platzhalter gesetzt:"
+  echo "   ${ENDPOINT}"
+  echo "   Client-Configs wuerden mit dieser falschen Adresse erstellt."
+  echo ""
+  echo "Bitte die oeffentliche IP oder den Hostnamen des VPS eingeben."
+  echo "(Nur auf dem VPS ausfuehren — nicht vom Gateway-Host aus!)"
+  echo ""
+  read -r -p "VPS-Endpoint HOST:PORT (z. B. 1.2.3.4:51820): " _ep
+  if [ -z "$_ep" ] || [ "${_ep%%:*}" = "vpn.example.com" ]; then
+    echo "Fehler: Kein gueltiger Endpoint angegeben."
+    echo "Manuell setzen: WIREGUARD2HOME_ENDPOINT=DEINE_VPS_IP:51820 in ${_cfg}"
+    exit 1
+  fi
+  # Port-Suffix ergaenzen falls nicht angegeben
+  [[ "$_ep" != *:* ]] && _ep="${_ep}:51820"
+  # In Config schreiben
+  if grep -q '^WIREGUARD2HOME_ENDPOINT=' "$_cfg" 2>/dev/null; then
+    sed -i "s|^WIREGUARD2HOME_ENDPOINT=.*|WIREGUARD2HOME_ENDPOINT=$(printf '%q' "$_ep")|" "$_cfg"
+  else
+    printf 'WIREGUARD2HOME_ENDPOINT=%q\n' "$_ep" >> "$_cfg"
+  fi
+  # Sofort in dieser Instanz wirksam
+  ENDPOINT="$_ep"
+  echo "Endpoint auf ${ENDPOINT} gesetzt."
+  echo ""
+}
+
 common_require_root
+validate_endpoint
 main_menu
 ____W2H_MAIN_SCRIPT____
   chmod 700 "$1"
@@ -7285,50 +7320,56 @@ run_update_remote_vps() {
 }
 
 check_endpoint_after_update() {
-  # Nach einem --update pruefen ob der Endpoint noch auf den Platzhalter zeigt.
-  # Falls ja: Nutzer darauf hinweisen und optionale Korrektur in der Config anbieten.
+  # Nur auf dem VPS pruefen (nicht auf dem Gateway-Host — dort wuerde ifconfig.me
+  # die Router-IP des Heimnetzes liefern, nicht die des VPS).
+  if [ "$ROLE" = "gateway" ]; then
+    return 0
+  fi
+
   local config_file="${WIREGUARD2HOME_CONFIG_FILE:-/etc/wireguard2home.conf}"
   local current_endpoint=""
   if [ -f "$config_file" ]; then
     current_endpoint="$(grep '^WIREGUARD2HOME_ENDPOINT=' "$config_file" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "'\"")"
   fi
 
-  if [ "${current_endpoint:-vpn.example.com:51820}" = "vpn.example.com:51820" ] || \
-     [ "${current_endpoint%%:*}" = "vpn.example.com" ]; then
-    echo ""
-    echo "⚠️  Hinweis: Der WireGuard-Endpoint in ${config_file} ist noch auf den"
-    echo "   Platzhalter 'vpn.example.com' gesetzt. Client-Configs werden mit"
-    echo "   diesem falschen Wert erstellt."
-    echo ""
-    if [ -t 0 ]; then
-      local _detected=""
-      if command -v curl >/dev/null 2>&1; then
-        _detected="$(curl -4 -s --max-time 5 https://ifconfig.me 2>/dev/null || \
-                     curl -6 -s --max-time 5 https://ifconfig.me 2>/dev/null || true)"
-      fi
-      read -r -p "   Korrekten Endpoint jetzt eintragen? [${_detected:-VPS-IP}:51820]: " _ep_input
-      local _new_endpoint="${_ep_input:-${_detected:-}}"
-      if [ -n "$_new_endpoint" ] && [ "${_new_endpoint%%:*}" != "vpn.example.com" ]; then
-        # Port anfuegen falls nicht angegeben
-        if [[ "$_new_endpoint" != *:* ]]; then
-          _new_endpoint="${_new_endpoint}:51820"
-        fi
-        # In Config schreiben (Zeile ersetzen oder anhaengen)
-        if grep -q '^WIREGUARD2HOME_ENDPOINT=' "$config_file" 2>/dev/null; then
-          sed -i "s|^WIREGUARD2HOME_ENDPOINT=.*|WIREGUARD2HOME_ENDPOINT=$(printf '%q' "$_new_endpoint")|" "$config_file"
-        else
-          printf 'WIREGUARD2HOME_ENDPOINT=%q\n' "$_new_endpoint" >> "$config_file"
-        fi
-        log "Endpoint auf ${_new_endpoint} gesetzt."
+  [ "${current_endpoint%%:*}" = "vpn.example.com" ] || return 0
+
+  echo ""
+  echo "⚠️  Der WireGuard-Endpoint in ${config_file} ist noch auf den"
+  echo "   Platzhalter 'vpn.example.com' gesetzt."
+  echo ""
+
+  # IP-Detection: Da wir auf dem VPS laufen, liefert ifconfig.me die richtige Adresse.
+  local _detected=""
+  if command -v curl >/dev/null 2>&1; then
+    _detected="$(curl -4 -s --max-time 5 https://ifconfig.me 2>/dev/null || \
+                 curl -6 -s --max-time 5 https://ifconfig.me 2>/dev/null || true)"
+  elif command -v wget >/dev/null 2>&1; then
+    _detected="$(wget -4 -qO- --timeout=5 https://ifconfig.me 2>/dev/null || \
+                 wget -6 -qO- --timeout=5 https://ifconfig.me 2>/dev/null || true)"
+  fi
+
+  if [ -t 0 ]; then
+    local _default="${_detected:+${_detected}:51820}"
+    read -r -p "   VPS-Endpoint HOST:PORT [${_default:-DEINE_VPS_IP:51820}]: " _ep_input
+    local _new_endpoint="${_ep_input:-${_default:-}}"
+    if [ -n "$_new_endpoint" ] && [ "${_new_endpoint%%:*}" != "vpn.example.com" ]; then
+      [[ "$_new_endpoint" != *:* ]] && _new_endpoint="${_new_endpoint}:51820"
+      if grep -q '^WIREGUARD2HOME_ENDPOINT=' "$config_file" 2>/dev/null; then
+        sed -i "s|^WIREGUARD2HOME_ENDPOINT=.*|WIREGUARD2HOME_ENDPOINT=$(printf '%q' "$_new_endpoint")|" "$config_file"
       else
-        echo "   Kein gueltiger Wert eingegeben – Endpoint bleibt unveraendert."
-        echo "   Manuell korrigieren: WIREGUARD2HOME_ENDPOINT=DEINE_VPS_IP:51820"
-        echo "   in ${config_file}"
+        printf 'WIREGUARD2HOME_ENDPOINT=%q\n' "$_new_endpoint" >> "$config_file"
       fi
+      log "Endpoint auf ${_new_endpoint} gesetzt."
+      log "Starte 'sudo /root/Wireguard2Home.sh' neu damit der neue Wert aktiv wird."
     else
-      echo "   Manuell korrigieren:"
+      echo "   Kein gueltiger Wert – manuell korrigieren:"
       echo "   WIREGUARD2HOME_ENDPOINT=DEINE_VPS_IP:51820  in ${config_file}"
     fi
+  else
+    local _hint="${_detected:+${_detected}:51820}"
+    echo "   Manuell korrigieren in ${config_file}:"
+    echo "   WIREGUARD2HOME_ENDPOINT=${_hint:-DEINE_VPS_IP:51820}"
   fi
 }
 
