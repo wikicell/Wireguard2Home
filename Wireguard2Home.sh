@@ -3,6 +3,7 @@
 set -e
 
 APP_NAME="Wireguard2Home"
+W2H_VERSION="1.0.0"
 CONFIG_FILE="${WIREGUARD2HOME_CONFIG_FILE:-/etc/wireguard2home.conf}"
 
 if [ -f "$CONFIG_FILE" ]; then
@@ -184,7 +185,7 @@ common_truncate_field() {
 app_banner() {
   echo ""
   echo "========================================"
-  echo "$APP_NAME"
+  echo "$APP_NAME  v${W2H_VERSION}"
   echo "========================================"
   echo ""
 }

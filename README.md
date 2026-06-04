@@ -269,13 +269,22 @@ sudo ./install-wireguard2home.sh
 
 **Skripte aktualisieren ohne Neuinstallation:**
 
+Zuerst immer den aktuellen Bootstrap holen — er enthält die neuen Script-Versionen eingebettet:
+
 ```bash
-# Lokalen Host aktualisieren
+curl -fsSL https://raw.githubusercontent.com/wikicell/Wireguard2Home/main/install-wireguard2home.sh \
+  -o install-wireguard2home.sh && chmod +x install-wireguard2home.sh
+
+# Nur VPS aktualisieren (auf dem VPS ausführen):
 sudo ./install-wireguard2home.sh --update
 
-# VPS und Gateway-Host gleichzeitig
+# VPS + Gateway-Host gleichzeitig (vom Gateway-Host aus):
 sudo ./install-wireguard2home.sh --update --role gateway --vps-host root@DEIN_VPS
 ```
+
+`--update` aktualisiert: `Wireguard2Home.sh`, Dashboard, Client-Manager, Backup, Restore,
+`runtime-paths.sh`, `install-vps.sh`, `install-gateway-host.sh` — ohne WireGuard-Config,
+Keys oder Docker-Stacks anzufassen.
 
 ## VPS-Installer (install-vps.sh)
 

@@ -3,6 +3,7 @@
 set -euo pipefail
 
 APP_NAME="Wireguard2Home"
+W2H_VERSION="1.0.0"
 PKG_MANAGER=""
 HAS_SYSTEMCTL=0
 
@@ -48,7 +49,7 @@ MASQUERADE_INTERFACE=""
 
 usage() {
   cat <<EOF
-${APP_NAME} Gateway Host Installer
+${APP_NAME} v${W2H_VERSION} — Gateway Host Installer
 
 Nutzung:
   $0 [optionen]

@@ -5,6 +5,7 @@
 set -euo pipefail
 
 APP_NAME="Wireguard2Home"
+W2H_VERSION="1.0.0"
 RAW_BASE_URL="https://raw.githubusercontent.com/wikicell/Wireguard2Home/main"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -48,7 +49,7 @@ UPDATE_MODE=0
 
 usage() {
   cat <<EOF
-${APP_NAME} Bootstrap Installer
+${APP_NAME} v${W2H_VERSION} — Bootstrap Installer
 
 Nutzung:
   $0 [optionen]
@@ -458,6 +459,7 @@ write_install_vps_sh() {
 set -euo pipefail
 
 APP_NAME="Wireguard2Home"
+W2H_VERSION="1.0.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 resolve_user_home() {
@@ -546,7 +548,7 @@ PUSHOVER_USER="${WIREGUARD2HOME_PUSHOVER_USER:-}"
 
 usage() {
   cat <<EOF
-${APP_NAME} VPS Installer
+${APP_NAME} v${W2H_VERSION} — VPS Installer
 
 Nutzung:
   $0 [optionen]
@@ -1492,6 +1494,7 @@ write_install_gateway_sh() {
 set -euo pipefail
 
 APP_NAME="Wireguard2Home"
+W2H_VERSION="1.0.0"
 PKG_MANAGER=""
 HAS_SYSTEMCTL=0
 
@@ -1537,7 +1540,7 @@ MASQUERADE_INTERFACE=""
 
 usage() {
   cat <<EOF
-${APP_NAME} Gateway Host Installer
+${APP_NAME} v${W2H_VERSION} — Gateway Host Installer
 
 Nutzung:
   $0 [optionen]
@@ -2088,6 +2091,7 @@ write_wireguard2home_sh() {
 set -e
 
 APP_NAME="Wireguard2Home"
+W2H_VERSION="1.0.0"
 CONFIG_FILE="${WIREGUARD2HOME_CONFIG_FILE:-/etc/wireguard2home.conf}"
 
 if [ -f "$CONFIG_FILE" ]; then
@@ -2269,7 +2273,7 @@ common_truncate_field() {
 app_banner() {
   echo ""
   echo "========================================"
-  echo "$APP_NAME"
+  echo "$APP_NAME  v${W2H_VERSION}"
   echo "========================================"
   echo ""
 }

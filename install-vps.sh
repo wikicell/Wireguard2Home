@@ -3,6 +3,7 @@
 set -euo pipefail
 
 APP_NAME="Wireguard2Home"
+W2H_VERSION="1.0.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 resolve_user_home() {
@@ -91,7 +92,7 @@ PUSHOVER_USER="${WIREGUARD2HOME_PUSHOVER_USER:-}"
 
 usage() {
   cat <<EOF
-${APP_NAME} VPS Installer
+${APP_NAME} v${W2H_VERSION} — VPS Installer
 
 Nutzung:
   $0 [optionen]
