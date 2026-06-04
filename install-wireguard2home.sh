@@ -6926,6 +6926,10 @@ run_vps_installer_remote() {
   for arg in ${VPS_PASSTHROUGH_ARGS[@]+"${VPS_PASSTHROUGH_ARGS[@]}"}; do
     extra_args+=" $(shell_escape "$arg")"
   done
+  local endpoint_arg=""
+  if [ -n "$VPS_ENDPOINT_HOST" ]; then
+    endpoint_arg=" --endpoint $(shell_escape "${VPS_ENDPOINT_HOST}:${WG_LISTEN_PORT}")"
+  fi
   vps_cmd="$(shell_escape "$REMOTE_INSTALL_DIR/install-vps.sh") \
     --service-user $(shell_escape "$REMOTE_SERVICE_USER") \
     --service-home $(shell_escape "$REMOTE_SERVICE_HOME") \
@@ -6934,7 +6938,7 @@ run_vps_installer_remote() {
     --dns-home-label $(shell_escape "$DNS_HOME_LABEL") \
     --dns-home-value $(shell_escape "$DNS_HOME_VALUE") \
     --dns-router-label $(shell_escape "$DNS_ROUTER_LABEL") \
-    --dns-router-value $(shell_escape "$DNS_ROUTER_VALUE")${extra_args}"
+    --dns-router-value $(shell_escape "$DNS_ROUTER_VALUE")${endpoint_arg}${extra_args}"
   $ssh_cmd "$VPS_HOST" "$vps_cmd"
 }
 
@@ -7038,6 +7042,11 @@ install_vps_local() {
   installer_path="$(ensure_local_script "install-vps.sh")"
   w2h_src="$(ensure_local_script "Wireguard2Home.sh")"
 
+  local _endpoint_flag=()
+  if [ -n "$VPS_ENDPOINT_HOST" ]; then
+    _endpoint_flag=(--endpoint "${VPS_ENDPOINT_HOST}:${WG_LISTEN_PORT}")
+  fi
+
   "$installer_path" \
     --script-source "$w2h_src" \
     --service-user "$SERVICE_USER" \
@@ -7048,6 +7057,7 @@ install_vps_local() {
     --dns-home-value "$DNS_HOME_VALUE" \
     --dns-router-label "$DNS_ROUTER_LABEL" \
     --dns-router-value "$DNS_ROUTER_VALUE" \
+    ${_endpoint_flag[@]+"${_endpoint_flag[@]}"} \
     ${VPS_PASSTHROUGH_ARGS[@]+"${VPS_PASSTHROUGH_ARGS[@]}"}
 
   local active_server_key=""

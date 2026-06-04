@@ -336,6 +336,20 @@ prompt_runtime_defaults() {
 
   echo ""
 
+  # Endpoint: oeffentliche IP/Hostname des VPS fuer Client-Configs
+  if [ -z "$WG_ENDPOINT" ]; then
+    local _detected_ip=""
+    if command -v curl >/dev/null 2>&1; then
+      _detected_ip="$(curl -s --max-time 5 https://ifconfig.me 2>/dev/null || true)"
+    elif command -v wget >/dev/null 2>&1; then
+      _detected_ip="$(wget -qO- --timeout=5 https://ifconfig.me 2>/dev/null || true)"
+    fi
+    local _default_endpoint="${_detected_ip:-vpn.example.com}:${WG_LISTEN_PORT}"
+    echo "Oeffentlicher WireGuard-Endpunkt (wird in Client-Configs als 'Endpoint' eingetragen)."
+    read -r -p "VPS-Endpunkt HOST:PORT [${_default_endpoint}]: " _endpoint_input
+    WG_ENDPOINT="${_endpoint_input:-${_default_endpoint}}"
+  fi
+
   if [ "$LAN_SUBNET_EXPLICIT" -eq 0 ]; then
     read -r -p "Heimnetz hinter dem Gateway-Host [${LAN_SUBNET}]: " LAN_SUBNET_INPUT
     if [ -n "${LAN_SUBNET_INPUT:-}" ]; then
