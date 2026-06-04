@@ -216,36 +216,80 @@ restore_clients() {
   fi
 }
 
+restore_docker_stacks() {
+  # Docker-Netzwerk anlegen falls nicht vorhanden
+  if command -v docker >/dev/null 2>&1; then
+    if ! docker network inspect gate2home_proxy >/dev/null 2>&1; then
+      echo "Lege Docker-Netzwerk gate2home_proxy an..."
+      log_run docker network create gate2home_proxy
+    fi
+    # Alle vorhandenen Stacks starten
+    local stack
+    for stack in /opt/npm /opt/uptime-kuma /opt/watchtower /opt/crowdsec; do
+      if [ -f "${stack}/docker-compose.yml" ]; then
+        echo "Starte Docker-Stack: ${stack} ..."
+        if [ "$DRY_RUN" -eq 0 ]; then
+          ( cd "$stack" && docker compose up -d ) \
+            || echo "Hinweis: Stack ${stack} konnte nicht gestartet werden – bitte manuell pruefen."
+        else
+          echo "  [dry-run] cd ${stack} && docker compose up -d"
+        fi
+      fi
+    done
+  else
+    echo "Hinweis: Docker nicht gefunden – Stacks muessen nach der Paketinstallation"
+    echo "manuell gestartet werden: cd /opt/<stack> && docker compose up -d"
+  fi
+}
+
 restore_full() {
   echo ""
   echo "Wiederherstellung: Full Restore"
 
-  backup_existing_path "/etc/wireguard" "$PRE_RESTORE_BASE/etc/wireguard"
-  backup_existing_path "$CLIENT_DIR" "$PRE_RESTORE_BASE/$CLIENT_ARCHIVE_PATH"
-  backup_existing_path "/opt/npm" "$PRE_RESTORE_BASE/opt/npm"
-  backup_existing_path "/opt/watchtower" "$PRE_RESTORE_BASE/opt/watchtower"
-  backup_existing_path "/etc/crowdsec" "$PRE_RESTORE_BASE/etc/crowdsec"
-  backup_existing_path "/etc/fail2ban" "$PRE_RESTORE_BASE/etc/fail2ban"
-  backup_existing_path "/etc/ufw" "$PRE_RESTORE_BASE/etc/ufw"
+  local _conf_file="${WIREGUARD2HOME_CONFIG_FILE:-/etc/wireguard2home.conf}"
 
-  restore_directory_contents "$RESTORE_WORKDIR/etc/wireguard" "/etc/wireguard"
+  # Sicherung des Ist-Zustands
+  backup_existing_path "/etc/wireguard"  "$PRE_RESTORE_BASE/etc/wireguard"
+  backup_existing_path "$CLIENT_DIR"     "$PRE_RESTORE_BASE/$CLIENT_ARCHIVE_PATH"
+  backup_existing_path "/opt/npm"        "$PRE_RESTORE_BASE/opt/npm"
+  backup_existing_path "/opt/uptime-kuma" "$PRE_RESTORE_BASE/opt/uptime-kuma"
+  backup_existing_path "/opt/watchtower" "$PRE_RESTORE_BASE/opt/watchtower"
+  backup_existing_path "/opt/crowdsec"   "$PRE_RESTORE_BASE/opt/crowdsec"
+  backup_existing_path "/etc/crowdsec"   "$PRE_RESTORE_BASE/etc/crowdsec"
+  backup_existing_path "/etc/fail2ban"   "$PRE_RESTORE_BASE/etc/fail2ban"
+  backup_existing_path "/etc/ufw"        "$PRE_RESTORE_BASE/etc/ufw"
+  backup_existing_path "$_conf_file"     "$PRE_RESTORE_BASE/etc/wireguard2home.conf"
+
+  # Restore
+  restore_directory_contents "$RESTORE_WORKDIR/etc/wireguard"     "/etc/wireguard"
   restore_directory_contents "$RESTORE_WORKDIR/$CLIENT_ARCHIVE_PATH" "$CLIENT_DIR"
-  restore_directory_contents "$RESTORE_WORKDIR/opt/npm" "/opt/npm"
-  restore_directory_contents "$RESTORE_WORKDIR/opt/watchtower" "/opt/watchtower"
-  restore_directory_contents "$RESTORE_WORKDIR/etc/crowdsec" "/etc/crowdsec"
-  restore_directory_contents "$RESTORE_WORKDIR/etc/fail2ban" "/etc/fail2ban"
-  restore_directory_contents "$RESTORE_WORKDIR/etc/ufw" "/etc/ufw"
+  restore_directory_contents "$RESTORE_WORKDIR/opt/npm"           "/opt/npm"
+  restore_directory_contents "$RESTORE_WORKDIR/opt/uptime-kuma"   "/opt/uptime-kuma"
+  restore_directory_contents "$RESTORE_WORKDIR/opt/watchtower"    "/opt/watchtower"
+  restore_directory_contents "$RESTORE_WORKDIR/opt/crowdsec"      "/opt/crowdsec"
+  restore_directory_contents "$RESTORE_WORKDIR/etc/crowdsec"      "/etc/crowdsec"
+  restore_directory_contents "$RESTORE_WORKDIR/etc/fail2ban"      "/etc/fail2ban"
+  restore_directory_contents "$RESTORE_WORKDIR/etc/ufw"           "/etc/ufw"
+
+  # wireguard2home.conf restaurieren (Endpoint, DNS, Pfade)
+  if [ -f "$RESTORE_WORKDIR/etc/wireguard2home.conf" ]; then
+    log_run cp -a "$RESTORE_WORKDIR/etc/wireguard2home.conf" "$_conf_file"
+    log_run chmod 600 "$_conf_file"
+    echo "Laufzeit-Konfiguration wiederhergestellt: ${_conf_file}"
+  fi
 
   if [ "$DRY_RUN" -eq 0 ]; then
     if [ -f /etc/wireguard/wg0.conf ]; then
       chmod 600 /etc/wireguard/wg0.conf
       systemctl restart wg-quick@wg0
     fi
-
     if [ -d "$CLIENT_DIR" ]; then
       find "$CLIENT_DIR" -maxdepth 1 -type f -name "*.conf" -exec chmod 600 {} \;
     fi
   fi
+
+  # Docker-Netzwerk anlegen und Stacks starten
+  restore_docker_stacks
 }
 
 parse_args() {

@@ -107,6 +107,12 @@ if [ -d "/etc/wireguard" ]; then
   cp -a /etc/wireguard "$BACKUP_WORKDIR/etc/"
 fi
 
+# Laufzeit-Konfiguration (Endpoint, DNS-Presets, Pfade, Service-User)
+local _conf_file="${WIREGUARD2HOME_CONFIG_FILE:-/etc/wireguard2home.conf}"
+if [ -f "$_conf_file" ]; then
+  cp -a "$_conf_file" "$BACKUP_WORKDIR/etc/wireguard2home.conf"
+fi
+
 # WireGuard Client Configs
 if [ -d "$CLIENT_DIR" ]; then
   mkdir -p "$BACKUP_WORKDIR/$(dirname "$CLIENT_ARCHIVE_PATH")"
