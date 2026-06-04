@@ -689,6 +689,36 @@ create_client() {
   check_base_files
   require_wg_running
 
+  # Endpoint-Platzhalter erkennen und vor der ersten Client-Erstellung korrigieren.
+  if [ "${ENDPOINT%%:*}" = "vpn.example.com" ] || [ "$ENDPOINT" = "vpn.example.com:51820" ]; then
+    echo ""
+    echo "⚠️  Warnung: Der Endpoint ist noch auf den Platzhalter 'vpn.example.com' gesetzt."
+    echo "   Client-Configs wuerden mit diesem falschen Wert erstellt."
+    echo ""
+    local _detected=""
+    if command -v curl >/dev/null 2>&1; then
+      _detected="$(curl -4 -s --max-time 5 https://ifconfig.me 2>/dev/null || \
+                   curl -6 -s --max-time 5 https://ifconfig.me 2>/dev/null || true)"
+    fi
+    read -r -p "Korrekter VPS-Endpoint HOST:PORT [${_detected:-DEINE_VPS_IP}:51820]: " _ep_input
+    local _new_ep="${_ep_input:-}"
+    if [ -n "$_new_ep" ] && [ "${_new_ep%%:*}" != "vpn.example.com" ]; then
+      [[ "$_new_ep" != *:* ]] && _new_ep="${_new_ep}:51820"
+      ENDPOINT="$_new_ep"
+      # Dauerhaft in die Config schreiben
+      local _cfg="${WIREGUARD2HOME_CONFIG_FILE:-/etc/wireguard2home.conf}"
+      if grep -q '^WIREGUARD2HOME_ENDPOINT=' "$_cfg" 2>/dev/null; then
+        sed -i "s|^WIREGUARD2HOME_ENDPOINT=.*|WIREGUARD2HOME_ENDPOINT=$(printf '%q' "$_new_ep")|" "$_cfg"
+      else
+        printf 'WIREGUARD2HOME_ENDPOINT=%q\n' "$_new_ep" >> "$_cfg"
+      fi
+      echo "Endpoint dauerhaft auf ${ENDPOINT} gesetzt."
+    else
+      echo "Fehler: Kein gueltiger Endpoint angegeben. Client-Erstellung abgebrochen."
+      exit 1
+    fi
+  fi
+
   # Exklusives Lock waehrend der gesamten Client-Erstellung verhindern,
   # dass zwei gleichzeitige Aufrufe dieselbe IP vergeben.
   local _lock_fd _lock_file="${WG_DIR}/.wg-client-create.lock"

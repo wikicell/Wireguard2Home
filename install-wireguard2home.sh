@@ -5958,6 +5958,36 @@ create_client() {
   check_base_files
   require_wg_running
 
+  # Endpoint-Platzhalter erkennen und vor der ersten Client-Erstellung korrigieren.
+  if [ "${ENDPOINT%%:*}" = "vpn.example.com" ] || [ "$ENDPOINT" = "vpn.example.com:51820" ]; then
+    echo ""
+    echo "⚠️  Warnung: Der Endpoint ist noch auf den Platzhalter 'vpn.example.com' gesetzt."
+    echo "   Client-Configs wuerden mit diesem falschen Wert erstellt."
+    echo ""
+    local _detected=""
+    if command -v curl >/dev/null 2>&1; then
+      _detected="$(curl -4 -s --max-time 5 https://ifconfig.me 2>/dev/null || \
+                   curl -6 -s --max-time 5 https://ifconfig.me 2>/dev/null || true)"
+    fi
+    read -r -p "Korrekter VPS-Endpoint HOST:PORT [${_detected:-DEINE_VPS_IP}:51820]: " _ep_input
+    local _new_ep="${_ep_input:-}"
+    if [ -n "$_new_ep" ] && [ "${_new_ep%%:*}" != "vpn.example.com" ]; then
+      [[ "$_new_ep" != *:* ]] && _new_ep="${_new_ep}:51820"
+      ENDPOINT="$_new_ep"
+      # Dauerhaft in die Config schreiben
+      local _cfg="${WIREGUARD2HOME_CONFIG_FILE:-/etc/wireguard2home.conf}"
+      if grep -q '^WIREGUARD2HOME_ENDPOINT=' "$_cfg" 2>/dev/null; then
+        sed -i "s|^WIREGUARD2HOME_ENDPOINT=.*|WIREGUARD2HOME_ENDPOINT=$(printf '%q' "$_new_ep")|" "$_cfg"
+      else
+        printf 'WIREGUARD2HOME_ENDPOINT=%q\n' "$_new_ep" >> "$_cfg"
+      fi
+      echo "Endpoint dauerhaft auf ${ENDPOINT} gesetzt."
+    else
+      echo "Fehler: Kein gueltiger Endpoint angegeben. Client-Erstellung abgebrochen."
+      exit 1
+    fi
+  fi
+
   # Exklusives Lock waehrend der gesamten Client-Erstellung verhindern,
   # dass zwei gleichzeitige Aufrufe dieselbe IP vergeben.
   local _lock_fd _lock_file="${WG_DIR}/.wg-client-create.lock"
@@ -7196,13 +7226,17 @@ install_gateway_local_and_vps_remote() {
 # Update mode: refresh deployed runtime scripts (keeps config & keys)
 # ──────────────────────────────────────────────────────────────────────────────
 
-UPDATE_SCRIPT_SET="runtime-paths.sh install-vps.sh install-gateway-host.sh Wireguard2Home.sh wireguard-dashboard.sh create-wg-client.sh backup-wireguard2home.sh restore-wireguard2home.sh"
+# Runtime-Skripte die lokal nach SERVICE_HOME deployed werden
+LOCAL_SCRIPT_SET="runtime-paths.sh Wireguard2Home.sh wireguard-dashboard.sh create-wg-client.sh backup-wireguard2home.sh restore-wireguard2home.sh"
+
+# Alle Skripte die auf den Remote-VPS uebertragen werden (inkl. Installer)
+REMOTE_SCRIPT_SET="runtime-paths.sh install-vps.sh install-gateway-host.sh Wireguard2Home.sh wireguard-dashboard.sh create-wg-client.sh backup-wireguard2home.sh restore-wireguard2home.sh"
 
 run_update_local() {
   log "Aktualisiere Runtime-Skripte in ${SERVICE_HOME} ..."
   mkdir -p "$SERVICE_HOME"
   local name
-  for name in $UPDATE_SCRIPT_SET; do
+  for name in $LOCAL_SCRIPT_SET; do
     extract_script "$name" "${SERVICE_HOME}/${name}"
   done
   log "Lokale Skripte aktualisiert. WireGuard-Konfiguration und Schluessel bleiben unveraendert."
@@ -7223,14 +7257,14 @@ run_update_remote_vps() {
   ssh_cmd="$(build_ssh_cmd)"
   scp_cmd="$(build_scp_cmd)"
 
-  for name in $UPDATE_SCRIPT_SET; do
+  for name in $REMOTE_SCRIPT_SET; do
     extract_script "$name" "${tmp_dir}/${name}"
   done
 
   log "Lade aktualisierte Skripte auf den VPS (${REMOTE_SERVICE_HOME}) ..."
   $ssh_cmd "$VPS_HOST" "mkdir -p $(shell_escape "$REMOTE_SERVICE_HOME")"
   local failed=0
-  for name in $UPDATE_SCRIPT_SET; do
+  for name in $REMOTE_SCRIPT_SET; do
     if ! $scp_cmd "${tmp_dir}/${name}" "${VPS_HOST}:${REMOTE_SERVICE_HOME}/${name}"; then
       log "Warnung: Upload von ${name} fehlgeschlagen – Update abgebrochen."
       failed=1
@@ -7247,7 +7281,55 @@ run_update_remote_vps() {
     log "VPS-Update unvollstaendig – bitte erneut ausfuehren."
     return 1
   fi
-  log "VPS-Skripte aktualisiert (inkl. install-vps.sh und install-gateway-host.sh)."
+  log "VPS-Skripte aktualisiert."
+}
+
+check_endpoint_after_update() {
+  # Nach einem --update pruefen ob der Endpoint noch auf den Platzhalter zeigt.
+  # Falls ja: Nutzer darauf hinweisen und optionale Korrektur in der Config anbieten.
+  local config_file="${WIREGUARD2HOME_CONFIG_FILE:-/etc/wireguard2home.conf}"
+  local current_endpoint=""
+  if [ -f "$config_file" ]; then
+    current_endpoint="$(grep '^WIREGUARD2HOME_ENDPOINT=' "$config_file" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "'\"")"
+  fi
+
+  if [ "${current_endpoint:-vpn.example.com:51820}" = "vpn.example.com:51820" ] || \
+     [ "${current_endpoint%%:*}" = "vpn.example.com" ]; then
+    echo ""
+    echo "⚠️  Hinweis: Der WireGuard-Endpoint in ${config_file} ist noch auf den"
+    echo "   Platzhalter 'vpn.example.com' gesetzt. Client-Configs werden mit"
+    echo "   diesem falschen Wert erstellt."
+    echo ""
+    if [ -t 0 ]; then
+      local _detected=""
+      if command -v curl >/dev/null 2>&1; then
+        _detected="$(curl -4 -s --max-time 5 https://ifconfig.me 2>/dev/null || \
+                     curl -6 -s --max-time 5 https://ifconfig.me 2>/dev/null || true)"
+      fi
+      read -r -p "   Korrekten Endpoint jetzt eintragen? [${_detected:-VPS-IP}:51820]: " _ep_input
+      local _new_endpoint="${_ep_input:-${_detected:-}}"
+      if [ -n "$_new_endpoint" ] && [ "${_new_endpoint%%:*}" != "vpn.example.com" ]; then
+        # Port anfuegen falls nicht angegeben
+        if [[ "$_new_endpoint" != *:* ]]; then
+          _new_endpoint="${_new_endpoint}:51820"
+        fi
+        # In Config schreiben (Zeile ersetzen oder anhaengen)
+        if grep -q '^WIREGUARD2HOME_ENDPOINT=' "$config_file" 2>/dev/null; then
+          sed -i "s|^WIREGUARD2HOME_ENDPOINT=.*|WIREGUARD2HOME_ENDPOINT=$(printf '%q' "$_new_endpoint")|" "$config_file"
+        else
+          printf 'WIREGUARD2HOME_ENDPOINT=%q\n' "$_new_endpoint" >> "$config_file"
+        fi
+        log "Endpoint auf ${_new_endpoint} gesetzt."
+      else
+        echo "   Kein gueltiger Wert eingegeben – Endpoint bleibt unveraendert."
+        echo "   Manuell korrigieren: WIREGUARD2HOME_ENDPOINT=DEINE_VPS_IP:51820"
+        echo "   in ${config_file}"
+      fi
+    else
+      echo "   Manuell korrigieren:"
+      echo "   WIREGUARD2HOME_ENDPOINT=DEINE_VPS_IP:51820  in ${config_file}"
+    fi
+  fi
 }
 
 run_update() {
@@ -7260,6 +7342,8 @@ run_update() {
   if [ "$ROLE" = "gateway" ] && [ -n "$VPS_HOST" ]; then
     run_update_remote_vps
   fi
+
+  check_endpoint_after_update
 
   echo ""
   echo "Update abgeschlossen."
