@@ -2350,17 +2350,30 @@ wireguard_restore_conf() {
   fi
 }
 
+wireguard_reload_live() {
+  # Wendet die neue wg0.conf live an, ohne bestehende Tunnel zu unterbrechen.
+  # wg syncconf braucht 'wg-quick strip' (entfernt PostUp/PostDown), da
+  # syncconf nur [Interface]/[Peer]-Direktiven akzeptiert.
+  if command -v wg-quick >/dev/null 2>&1 && wg show "$WG_IFACE" >/dev/null 2>&1; then
+    if wg syncconf "$WG_IFACE" <(wg-quick strip "$WG_IFACE" 2>/dev/null) 2>/dev/null; then
+      return 0
+    fi
+  fi
+  # Fallback: vollstaendiger Neustart (unterbricht aktive Sessions)
+  systemctl restart "wg-quick@$WG_IFACE"
+}
+
 wireguard_restart_with_rollback() {
   CONF_BACKUP_FILE="$1"
   CLIENT_CONF_TO_DELETE="${2:-}"
   CLIENT_QR_TO_DELETE="${3:-}"
 
-  if systemctl restart "wg-quick@$WG_IFACE"; then
+  if wireguard_reload_live; then
     return 0
   fi
 
   echo ""
-  echo "Fehler: Neustart von wg-quick@$WG_IFACE fehlgeschlagen."
+  echo "Fehler: WireGuard-Reload fuer $WG_IFACE fehlgeschlagen."
   echo "Stelle letzte Sicherung wieder her: $CONF_BACKUP_FILE"
 
   wireguard_restore_conf "$CONF_BACKUP_FILE"
@@ -3016,6 +3029,16 @@ wireguard_create_client() {
   app_check_base_files
   app_require_wg_running
 
+  # Exklusives Lock waehrend der gesamten Client-Erstellung – verhindert,
+  # dass zwei gleichzeitige Aufrufe dieselbe freie IP vergeben.
+  _wg_lock_file="${WG_DIR}/.wg-client-create.lock"
+  exec {_wg_lock_fd}>"$_wg_lock_file"
+  if ! flock -n "$_wg_lock_fd" 2>/dev/null; then
+    echo "Fehler: Ein anderer Client-Erstellungsprozess laeuft gerade. Bitte warten."
+    exec {_wg_lock_fd}>&- 2>/dev/null || true
+    return 1
+  fi
+
   echo ""
   echo "Suche naechste freie WireGuard-IP..."
   NEXT_IP=$(wireguard_get_next_ip)
@@ -3078,7 +3101,7 @@ wireguard_create_client() {
   CLIENT_PUBLIC_KEY=$(echo "$CLIENT_PRIVATE_KEY" | wg pubkey)
   CONF_BACKUP_FILE=$(wireguard_backup_conf)
   TMP_WG_CONF="${WG_CONF}.tmp.$$"
-  trap 'rm -f "${TMP_WG_CONF:-}"' EXIT
+  trap 'rm -f "${TMP_WG_CONF:-}"; exec {_wg_lock_fd}>&- 2>/dev/null || true' EXIT
 
   cp "$WG_CONF" "$TMP_WG_CONF"
   cat >> "$TMP_WG_CONF" <<EOF
@@ -3130,6 +3153,9 @@ EOF
   echo "AllowedIPs:    $CLIENT_ALLOWED_IPS"
 
   wireguard_show_created_client "$CLIENT_CONF" "$CLIENT_QR"
+
+  # Lock freigeben (FD schliessen gibt den flock frei)
+  exec {_wg_lock_fd}>&- 2>/dev/null || true
 }
 
 wireguard_remove_client() {
@@ -4106,6 +4132,14 @@ restore_prepare() {
   PRE_RESTORE_BASE="${PRE_RESTORE_ROOT}/gate2home-$RESTORE_TS"
 
   mkdir -p "$RESTORE_WORKDIR"
+
+  echo "Pruefe Archiv-Integritaet..."
+  if ! tar -tzf "$RESTORE_BACKUP_FILE" >/dev/null 2>&1; then
+    echo "Fehler: Backup-Archiv ist beschaedigt oder unvollstaendig: $RESTORE_BACKUP_FILE"
+    echo "Kein Restore durchgefuehrt – bestehende Daten sind unveraendert."
+    exit 1
+  fi
+
   if ! tar -xzf "$RESTORE_BACKUP_FILE" -C "$RESTORE_WORKDIR"; then
     echo "Fehler: Backup konnte nicht entpackt werden."
     exit 1
