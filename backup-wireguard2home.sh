@@ -123,7 +123,15 @@ if [ -d "/opt/watchtower" ]; then
   cp -a /opt/watchtower "$BACKUP_WORKDIR/opt/"
 fi
 
-# CrowdSec
+# Uptime Kuma (Datenbank mit Monitoren, Incidents und Zugangsdaten)
+if [ -d "/opt/uptime-kuma" ]; then
+  cp -a /opt/uptime-kuma "$BACKUP_WORKDIR/opt/"
+fi
+
+# CrowdSec Docker-Stack (/opt/crowdsec) und Host-Konfiguration (/etc/crowdsec)
+if [ -d "/opt/crowdsec" ]; then
+  cp -a /opt/crowdsec "$BACKUP_WORKDIR/opt/"
+fi
 if [ -d "/etc/crowdsec" ]; then
   cp -a /etc/crowdsec "$BACKUP_WORKDIR/etc/"
 fi

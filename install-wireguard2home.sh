@@ -791,6 +791,27 @@ prompt_runtime_defaults() {
 
   echo ""
 
+  # Endpoint: oeffentliche IP/Hostname des VPS fuer Client-Configs.
+  # IPv4 wird bevorzugt; nur wenn keine IPv4 erreichbar ist, wird IPv6 genutzt.
+  if [ -z "$WG_ENDPOINT" ]; then
+    local _detected_ip=""
+    if command -v curl >/dev/null 2>&1; then
+      _detected_ip="$(curl -4 -s --max-time 5 https://ifconfig.me 2>/dev/null || true)"
+      if [ -z "$_detected_ip" ]; then
+        _detected_ip="$(curl -6 -s --max-time 5 https://ifconfig.me 2>/dev/null || true)"
+      fi
+    elif command -v wget >/dev/null 2>&1; then
+      _detected_ip="$(wget -4 -qO- --timeout=5 https://ifconfig.me 2>/dev/null || true)"
+      if [ -z "$_detected_ip" ]; then
+        _detected_ip="$(wget -6 -qO- --timeout=5 https://ifconfig.me 2>/dev/null || true)"
+      fi
+    fi
+    local _default_endpoint="${_detected_ip:-vpn.example.com}:${WG_LISTEN_PORT}"
+    echo "Oeffentlicher WireGuard-Endpunkt (wird in Client-Configs als 'Endpoint' eingetragen)."
+    read -r -p "VPS-Endpunkt HOST:PORT [${_default_endpoint}]: " _endpoint_input
+    WG_ENDPOINT="${_endpoint_input:-${_default_endpoint}}"
+  fi
+
   if [ "$LAN_SUBNET_EXPLICIT" -eq 0 ]; then
     read -r -p "Heimnetz hinter dem Gateway-Host [${LAN_SUBNET}]: " LAN_SUBNET_INPUT
     if [ -n "${LAN_SUBNET_INPUT:-}" ]; then
@@ -6321,7 +6342,15 @@ if [ -d "/opt/watchtower" ]; then
   cp -a /opt/watchtower "$BACKUP_WORKDIR/opt/"
 fi
 
-# CrowdSec
+# Uptime Kuma (Datenbank mit Monitoren, Incidents und Zugangsdaten)
+if [ -d "/opt/uptime-kuma" ]; then
+  cp -a /opt/uptime-kuma "$BACKUP_WORKDIR/opt/"
+fi
+
+# CrowdSec Docker-Stack (/opt/crowdsec) und Host-Konfiguration (/etc/crowdsec)
+if [ -d "/opt/crowdsec" ]; then
+  cp -a /opt/crowdsec "$BACKUP_WORKDIR/opt/"
+fi
 if [ -d "/etc/crowdsec" ]; then
   cp -a /etc/crowdsec "$BACKUP_WORKDIR/etc/"
 fi
