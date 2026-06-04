@@ -1342,7 +1342,7 @@ deploy_uptime_kuma() {
   cat > "${UPTIME_DIR}/docker-compose.yml" <<'____UPTIME_COMPOSE____'
 services:
   uptime-kuma:
-    image: louislam/uptime-kuma:1
+    image: louislam/uptime-kuma:2
     container_name: uptime-kuma
     restart: unless-stopped
     expose:
