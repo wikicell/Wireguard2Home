@@ -222,18 +222,13 @@ Tasten: `v`/`tab` zum Umschalten, `q` zum Beenden.
 ## Projektstruktur
 
 ```text
-install-wireguard2home.sh     ← Self-contained Bootstrap (7000+ Zeilen, alle Sub-Scripts eingebettet)
+install-wireguard2home.sh     ← Self-contained Bootstrap (alle Installer eingebettet)
 install-vps.sh                ← VPS-Installer (eigenständig + im Bootstrap eingebettet)
 install-gateway-host.sh       ← Gateway-Host-Installer (eigenständig + im Bootstrap eingebettet)
-Wireguard2Home.sh             ← Zentrale CLI für den VPS-Betrieb
-wireguard-dashboard.sh        ← Live-Dashboard (eingebettet)
-create-wg-client.sh           ← Client-Manager (eingebettet)
-backup-wireguard2home.sh      ← Backup-Script (eingebettet)
-restore-wireguard2home.sh     ← Restore-Script (eingebettet)
-runtime-paths.sh              ← Gemeinsame Laufzeit-Konfiguration (eingebettet)
+Wireguard2Home.sh             ← Zentrale CLI: Client-Manager, Dashboard, Backup, Restore, Speedtests
 ```
 
-Auf dem VPS wird produktiv nur `Wireguard2Home.sh` verwendet. Der Bootstrap bündelt alle Sub-Scripts als Heredocs — keine externen Downloads zur Laufzeit nötig.
+`Wireguard2Home.sh` ist eine **einzige, eigenständige Datei** — Client-Verwaltung, Live-Dashboard, Backup und Restore sind als Funktionen darin enthalten (keine separaten Sub-Scripts). Das hält die Logik an einer Stelle und verhindert Inkonsistenzen. Der Bootstrap bündelt die drei Installer als Heredocs — keine externen Downloads zur Laufzeit nötig.
 
 ## Bootstrap (empfohlener Weg)
 
@@ -282,8 +277,8 @@ sudo ./install-wireguard2home.sh --update
 sudo ./install-wireguard2home.sh --update --role gateway --vps-host root@DEIN_VPS
 ```
 
-`--update` aktualisiert: `Wireguard2Home.sh`, Dashboard, Client-Manager, Backup, Restore,
-`runtime-paths.sh`, `install-vps.sh`, `install-gateway-host.sh` — ohne WireGuard-Config,
+`--update` aktualisiert lokal `Wireguard2Home.sh`; beim Gateway-Weg zusätzlich
+`install-vps.sh` und `install-gateway-host.sh` auf dem VPS — ohne WireGuard-Config,
 Keys oder Docker-Stacks anzufassen.
 
 ## VPS-Installer (install-vps.sh)
