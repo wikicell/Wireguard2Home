@@ -638,15 +638,23 @@ Voraussetzung: Eine (Sub-)Domain zeigt per DNS-A-Record auf die öffentliche VPS
 
 ## Backup
 
-Das integrierte Backup-System (Menüpunkt 4) sichert:
+Das integrierte Backup-System (Menüpunkt 4) erstellt ein vollständiges Archiv aller relevanten Konfigurationen und Daten:
 
-```text
-/etc/wireguard/        ← WireGuard-Config und Keys
-/root/wg-clients/      ← Client-Configs und QR-Codes
-/root/backups/gate2home/  ← lokale Backup-Rotation
-```
+| Pfad | Inhalt |
+| --- | --- |
+| `/etc/wireguard/` | WireGuard Keys und Server-Config |
+| `/root/wg-clients/` | Client-Configs und QR-Codes |
+| `/opt/npm/` | Nginx Proxy Manager — Compose, Proxy-Konfigurationen, SSL-Zertifikate |
+| `/opt/uptime-kuma/` | Uptime Kuma — Compose und Datenbank (Monitore, Alerts, Admin-Account) |
+| `/opt/watchtower/` | Watchtower — Compose und `.env` (inkl. Pushover-Token) |
+| `/opt/crowdsec/` | CrowdSec — Compose und Daten-Volume |
+| `/etc/crowdsec/` | CrowdSec Host-Konfiguration |
+| `/etc/fail2ban/` | Fail2Ban-Konfiguration |
+| `/etc/ufw/` | UFW-Firewall-Regeln |
 
-Backups werden als `.tar.gz` gespeichert und automatisch per `rsync` zum Gateway-Host übertragen (Offsite-Sicherung). Lokale und Remote-Rotation sind konfigurierbar.
+Nicht vorhandene Pfade werden automatisch übersprungen (z. B. wenn der Monitoring-Stack nicht installiert wurde).
+
+Backups werden als `.tar.gz` gespeichert und automatisch per `rsync` zum Gateway-Host übertragen (Offsite-Sicherung). Lokale und Remote-Rotation sind konfigurierbar (`LOCAL_KEEP_COUNT`, `RPI_KEEP_COUNT`).
 
 > Private Keys, VPN-Zugangsdaten und Client-Configs sind sensibel — Backups verschlüsseln und niemals öffentlich teilen.
 
