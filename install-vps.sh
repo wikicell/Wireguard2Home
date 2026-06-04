@@ -3,7 +3,7 @@
 set -euo pipefail
 
 APP_NAME="Wireguard2Home"
-W2H_VERSION="1.0.0"
+W2H_VERSION="1.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 resolve_user_home() {

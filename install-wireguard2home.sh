@@ -459,7 +459,7 @@ write_install_vps_sh() {
 set -euo pipefail
 
 APP_NAME="Wireguard2Home"
-W2H_VERSION="1.0.0"
+W2H_VERSION="1.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 resolve_user_home() {
@@ -1494,7 +1494,7 @@ write_install_gateway_sh() {
 set -euo pipefail
 
 APP_NAME="Wireguard2Home"
-W2H_VERSION="1.0.0"
+W2H_VERSION="1.1.0"
 PKG_MANAGER=""
 HAS_SYSTEMCTL=0
 
@@ -2091,7 +2091,7 @@ write_wireguard2home_sh() {
 set -e
 
 APP_NAME="Wireguard2Home"
-W2H_VERSION="1.0.0"
+W2H_VERSION="1.1.0"
 CONFIG_FILE="${WIREGUARD2HOME_CONFIG_FILE:-/etc/wireguard2home.conf}"
 
 if [ -f "$CONFIG_FILE" ]; then
@@ -4407,6 +4407,31 @@ validate_endpoint() {
   echo ""
 }
 
+parse_args() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --backup-only)
+        common_require_root
+        backup_execute
+        exit 0
+        ;;
+      --help|-h)
+        echo "Wireguard2Home v${W2H_VERSION}"
+        echo ""
+        echo "Optionen:"
+        echo "  --backup-only   Backup sofort ausfuehren (nicht-interaktiv, fuer Cron)"
+        echo "  --help          Diese Hilfe anzeigen"
+        exit 0
+        ;;
+      *)
+        echo "Unbekannte Option: $1"
+        exit 1
+        ;;
+    esac
+  done
+}
+
+parse_args "$@"
 common_require_root
 validate_endpoint
 main_menu

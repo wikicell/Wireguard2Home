@@ -19,7 +19,7 @@ Eigenständiger WireGuard-VPN-Stack zum Überbrücken von CGNAT. Ein leichtgewic
 * [Betrieb](#betrieb)
 * [Monitoring Stack](#monitoring-stack)
 * [Reverse Proxy](#reverse-proxy)
-* [Backup & Restore](#backup--restore)
+* [Backup & Restore](#backup--restore) *(inkl. Cron, Migration)*
 * [Sicherheit](#sicherheit)
 * [Hardware-Anforderungen](#hardware-anforderungen)
 * [Fehlerbehebung](#fehlerbehebung)
@@ -667,6 +667,26 @@ Backups werden als `.tar.gz` gespeichert und automatisch per `rsync` zum Gateway
 
 > Private Keys, VPN-Zugangsdaten und Client-Configs sind sensibel — Backups verschlüsseln und niemals öffentlich teilen.
 
+### Backup manuell prüfen
+
+```bash
+LATEST=$(ls -t /root/backups/gate2home/gate2home-backup-*.tar.gz | head -1)
+echo "Prüfe: $LATEST"
+tar -tzf "$LATEST" | grep -E "wireguard|uptime|npm|watchtower|wireguard2home"
+```
+
+> **Hinweis:** Nie `tar -tzf *.tar.gz` mit Glob verwenden — wenn mehrere Archive vorhanden sind, interpretiert tar alles nach dem ersten Archiv als "Datei zum Suchen". Immer den expliziten Pfad oder `$(ls -t | head -1)` verwenden.
+
+### Automatisches Backup (Cron)
+
+`--backup-only` führt das Backup nicht-interaktiv aus (kein Menü, kein Bestätigungsdialog) — ideal für Cronjobs:
+
+```bash
+# Täglich um 03:00 Uhr
+echo "0 3 * * * root /root/Wireguard2Home.sh --backup-only" | sudo tee /etc/cron.d/gate2home-backup
+sudo chmod 644 /etc/cron.d/gate2home-backup
+```
+
 ## Restore
 
 Das Restore-System (Menüpunkt 5) stellt gesicherte Backups wieder her.
@@ -681,11 +701,39 @@ sudo /root/Wireguard2Home.sh   # → Menü → 5) Restore starten
 | --- | --- |
 | `wireguard` | `/etc/wireguard` (Keys und Server-Config) |
 | `clients` | Client-Verzeichnis (`.conf`-Dateien und QR-Codes) |
-| `full` | Alle gesicherten Verzeichnisse |
+| `full` | Alles — inkl. Docker-Stacks, Laufzeit-Config, WireGuard |
 
 **Varianten:** Echter Restore oder Dry-Run (zeigt nur was passieren würde).
 
 Vor jeder Wiederherstellung wird der aktuelle Zustand automatisch unter `/root/pre-restore-backups/` gesichert. Das Archiv wird vor der Extraktion auf Integrität geprüft — bei einem beschädigten Backup bricht der Restore sicher ab.
+
+## Migration auf neuen VPS
+
+Vollständige Prozedur um ein laufendes System auf einen frischen VPS umzuziehen:
+
+**1. Neuen VPS vorbereiten** (Pakete, Docker, Scripts):
+```bash
+sudo ./install-wireguard2home.sh --role vps --with-reverse-proxy --with-monitoring
+```
+
+**2. Backup vom alten VPS auf neuen VPS übertragen:**
+```bash
+# Vom lokalen Rechner oder Gateway-Host:
+scp root@ALTER_VPS:/root/backups/gate2home/gate2home-backup-DATUM.tar.gz \
+    root@NEUER_VPS:/root/backups/gate2home/
+```
+
+**3. Full Restore starten:**
+```bash
+sudo /root/Wireguard2Home.sh  # → 5) Restore → 3) full
+```
+
+**Was automatisch passiert:**
+- `/etc/wireguard/` mit alten Keys → Gateway-Host und alle Clients verbinden sich ohne Änderung
+- `/etc/wireguard2home.conf` → Endpoint, DNS, Pfade korrekt
+- Docker-Netzwerk `gate2home_proxy` wird angelegt (falls nicht vorhanden)
+- Alle Docker-Stacks werden automatisch gestartet (NPM, Uptime Kuma, Watchtower, CrowdSec)
+- WireGuard wird neu gestartet
 
 ---
 
