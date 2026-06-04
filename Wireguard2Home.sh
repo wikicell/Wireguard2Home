@@ -1851,15 +1851,20 @@ backup_execute() {
   mkdir -p "$BACKUP_WORKDIR/etc" "$BACKUP_WORKDIR/opt" "$BACKUP_WORKDIR/system"
 
   [ -d "/etc/wireguard" ] && cp -a /etc/wireguard "$BACKUP_WORKDIR/etc/"
+  # Laufzeit-Konfiguration (Endpoint, DNS-Presets, Pfade)
+  _w2h_conf="${WIREGUARD2HOME_CONFIG_FILE:-/etc/wireguard2home.conf}"
+  [ -f "$_w2h_conf" ] && cp -a "$_w2h_conf" "$BACKUP_WORKDIR/etc/wireguard2home.conf"
   if [ -d "$CLIENT_DIR" ]; then
     mkdir -p "$BACKUP_WORKDIR/$(dirname "$CLIENT_ARCHIVE_PATH")"
     cp -a "$CLIENT_DIR" "$BACKUP_WORKDIR/$(dirname "$CLIENT_ARCHIVE_PATH")/"
   fi
-  [ -d "/opt/npm" ] && cp -a /opt/npm "$BACKUP_WORKDIR/opt/"
-  [ -d "/opt/watchtower" ] && cp -a /opt/watchtower "$BACKUP_WORKDIR/opt/"
-  [ -d "/etc/crowdsec" ] && cp -a /etc/crowdsec "$BACKUP_WORKDIR/etc/"
-  [ -d "/etc/fail2ban" ] && cp -a /etc/fail2ban "$BACKUP_WORKDIR/etc/"
-  [ -d "/etc/ufw" ] && cp -a /etc/ufw "$BACKUP_WORKDIR/etc/"
+  [ -d "/opt/npm" ]         && cp -a /opt/npm         "$BACKUP_WORKDIR/opt/"
+  [ -d "/opt/uptime-kuma" ] && cp -a /opt/uptime-kuma "$BACKUP_WORKDIR/opt/"
+  [ -d "/opt/watchtower" ]  && cp -a /opt/watchtower  "$BACKUP_WORKDIR/opt/"
+  [ -d "/opt/crowdsec" ]    && cp -a /opt/crowdsec    "$BACKUP_WORKDIR/opt/"
+  [ -d "/etc/crowdsec" ]    && cp -a /etc/crowdsec    "$BACKUP_WORKDIR/etc/"
+  [ -d "/etc/fail2ban" ]    && cp -a /etc/fail2ban    "$BACKUP_WORKDIR/etc/"
+  [ -d "/etc/ufw" ]         && cp -a /etc/ufw         "$BACKUP_WORKDIR/etc/"
 
   systemctl is-enabled wg-quick@wg0 > "$BACKUP_WORKDIR/system/wg-enabled.txt" 2>/dev/null || true
   systemctl status wg-quick@wg0 --no-pager > "$BACKUP_WORKDIR/system/wg-status.txt" 2>/dev/null || true
@@ -2076,21 +2081,37 @@ restore_full_mode() {
   echo ""
   echo "Wiederherstellung: Full Restore"
 
-  restore_backup_existing_path "/etc/wireguard" "$PRE_RESTORE_BASE/etc/wireguard"
-  restore_backup_existing_path "$CLIENT_DIR" "$PRE_RESTORE_BASE/$CLIENT_ARCHIVE_PATH"
-  restore_backup_existing_path "/opt/npm" "$PRE_RESTORE_BASE/opt/npm"
-  restore_backup_existing_path "/opt/watchtower" "$PRE_RESTORE_BASE/opt/watchtower"
-  restore_backup_existing_path "/etc/crowdsec" "$PRE_RESTORE_BASE/etc/crowdsec"
-  restore_backup_existing_path "/etc/fail2ban" "$PRE_RESTORE_BASE/etc/fail2ban"
-  restore_backup_existing_path "/etc/ufw" "$PRE_RESTORE_BASE/etc/ufw"
+  local _w2h_conf="${WIREGUARD2HOME_CONFIG_FILE:-/etc/wireguard2home.conf}"
 
-  restore_directory_contents "$RESTORE_WORKDIR/etc/wireguard" "/etc/wireguard"
+  restore_backup_existing_path "/etc/wireguard"  "$PRE_RESTORE_BASE/etc/wireguard"
+  restore_backup_existing_path "$CLIENT_DIR"      "$PRE_RESTORE_BASE/$CLIENT_ARCHIVE_PATH"
+  restore_backup_existing_path "/opt/npm"         "$PRE_RESTORE_BASE/opt/npm"
+  restore_backup_existing_path "/opt/uptime-kuma" "$PRE_RESTORE_BASE/opt/uptime-kuma"
+  restore_backup_existing_path "/opt/watchtower"  "$PRE_RESTORE_BASE/opt/watchtower"
+  restore_backup_existing_path "/opt/crowdsec"    "$PRE_RESTORE_BASE/opt/crowdsec"
+  restore_backup_existing_path "/etc/crowdsec"    "$PRE_RESTORE_BASE/etc/crowdsec"
+  restore_backup_existing_path "/etc/fail2ban"    "$PRE_RESTORE_BASE/etc/fail2ban"
+  restore_backup_existing_path "/etc/ufw"         "$PRE_RESTORE_BASE/etc/ufw"
+  restore_backup_existing_path "$_w2h_conf"       "$PRE_RESTORE_BASE/etc/wireguard2home.conf"
+
+  restore_directory_contents "$RESTORE_WORKDIR/etc/wireguard"     "/etc/wireguard"
   restore_directory_contents "$RESTORE_WORKDIR/$CLIENT_ARCHIVE_PATH" "$CLIENT_DIR"
-  restore_directory_contents "$RESTORE_WORKDIR/opt/npm" "/opt/npm"
-  restore_directory_contents "$RESTORE_WORKDIR/opt/watchtower" "/opt/watchtower"
-  restore_directory_contents "$RESTORE_WORKDIR/etc/crowdsec" "/etc/crowdsec"
-  restore_directory_contents "$RESTORE_WORKDIR/etc/fail2ban" "/etc/fail2ban"
-  restore_directory_contents "$RESTORE_WORKDIR/etc/ufw" "/etc/ufw"
+  restore_directory_contents "$RESTORE_WORKDIR/opt/npm"           "/opt/npm"
+  restore_directory_contents "$RESTORE_WORKDIR/opt/uptime-kuma"   "/opt/uptime-kuma"
+  restore_directory_contents "$RESTORE_WORKDIR/opt/watchtower"    "/opt/watchtower"
+  restore_directory_contents "$RESTORE_WORKDIR/opt/crowdsec"      "/opt/crowdsec"
+  restore_directory_contents "$RESTORE_WORKDIR/etc/crowdsec"      "/etc/crowdsec"
+  restore_directory_contents "$RESTORE_WORKDIR/etc/fail2ban"      "/etc/fail2ban"
+  restore_directory_contents "$RESTORE_WORKDIR/etc/ufw"           "/etc/ufw"
+
+  # wireguard2home.conf restaurieren
+  if [ -f "$RESTORE_WORKDIR/etc/wireguard2home.conf" ]; then
+    if [ "$RESTORE_DRY_RUN" -eq 0 ]; then
+      cp -a "$RESTORE_WORKDIR/etc/wireguard2home.conf" "$_w2h_conf"
+      chmod 600 "$_w2h_conf"
+      echo "Laufzeit-Konfiguration wiederhergestellt: ${_w2h_conf}"
+    fi
+  fi
 
   if [ "$RESTORE_DRY_RUN" -eq 0 ]; then
     if [ -f /etc/wireguard/wg0.conf ]; then
@@ -2099,6 +2120,16 @@ restore_full_mode() {
     fi
     if [ -d "$CLIENT_DIR" ]; then
       find "$CLIENT_DIR" -maxdepth 1 -type f -name "*.conf" -exec chmod 600 {} \;
+    fi
+    # Docker-Netzwerk und Stacks starten
+    if command -v docker >/dev/null 2>&1; then
+      docker network inspect gate2home_proxy >/dev/null 2>&1 || docker network create gate2home_proxy
+      for _stack in /opt/npm /opt/uptime-kuma /opt/watchtower /opt/crowdsec; do
+        if [ -f "${_stack}/docker-compose.yml" ]; then
+          ( cd "$_stack" && docker compose up -d ) \
+            || echo "Hinweis: Stack ${_stack} konnte nicht gestartet werden."
+        fi
+      done
     fi
   fi
 }
