@@ -99,7 +99,8 @@ common_require_command() {
 
 common_require_root() {
   if [ "${EUID}" -ne 0 ]; then
-    echo "Fehler: Bitte mit sudo oder als root ausfuehren."
+    echo "Fehler: Root-Rechte benoetigt (fuer wg, systemctl, iptables)."
+    echo "  -> Starte erneut mit: sudo $0"
     exit 1
   fi
 }
@@ -107,6 +108,14 @@ common_require_root() {
 common_pause_return() {
   echo ""
   read -p "Enter fuer Zurueck..." _ || true
+}
+
+common_is_yes() {
+  # Akzeptiert ja/j/yes/y in beliebiger Gross-/Kleinschreibung.
+  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+    ja|j|yes|y) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 common_use_colors() {
@@ -182,10 +191,51 @@ common_truncate_field() {
   '
 }
 
+app_status_line() {
+  # Kompakte Statuszeile: Tunnel, Endpoint, Clients, Gateway-Handshake.
+  local _tunnel="inaktiv" _clients=0 _gw="—" _ep="$ENDPOINT"
+
+  if wg show "$WG_IFACE" >/dev/null 2>&1; then
+    _tunnel="aktiv"
+  fi
+
+  if [ -d "$CLIENT_DIR" ]; then
+    _clients=$(find "$CLIENT_DIR" -maxdepth 1 -type f -name "*.conf" 2>/dev/null | wc -l | tr -d ' ')
+  fi
+
+  # Gateway-Host = Peer mit 10.100.0.2 in den AllowedIPs; letzten Handshake ablesen
+  if wg show "$WG_IFACE" >/dev/null 2>&1; then
+    local _gw_key
+    _gw_key=$(wg show "$WG_IFACE" allowed-ips 2>/dev/null | awk '/10\.100\.0\.2\/32/ {print $1; exit}')
+    if [ -n "$_gw_key" ]; then
+      local _hs
+      _hs=$(wg show "$WG_IFACE" latest-handshakes 2>/dev/null | awk -v k="$_gw_key" '$1==k {print $2; exit}')
+      if [ -n "$_hs" ] && [ "$_hs" -gt 0 ] 2>/dev/null; then
+        local _age=$(( $(date +%s) - _hs ))
+        if [ "$_age" -lt 180 ]; then
+          _gw="verbunden (vor ${_age}s)"
+        else
+          _gw="stale (vor ${_age}s)"
+        fi
+      else
+        _gw="kein Handshake"
+      fi
+    fi
+  fi
+
+  printf "  Tunnel: %-8s  Clients: %-3s  Gateway: %s\n" "$_tunnel" "$_clients" "$_gw"
+  printf "  Endpoint: %s\n" "$_ep"
+  if [ "${_ep%%:*}" = "vpn.example.com" ]; then
+    printf "  \033[33m! Endpoint ist noch Platzhalter — Client-Configs waeren ungueltig\033[0m\n"
+  fi
+}
+
 app_banner() {
   echo ""
   echo "========================================"
   echo "$APP_NAME  v${W2H_VERSION}"
+  echo "========================================"
+  app_status_line
   echo "========================================"
   echo ""
 }
@@ -193,6 +243,7 @@ app_banner() {
 app_check_base_files() {
   if [ ! -f "$WG_CONF" ]; then
     echo "Fehler: $WG_CONF nicht gefunden."
+    echo "  -> Wurde der VPS-Installer ausgefuehrt? install-wireguard2home.sh --role vps"
     exit 1
   fi
 }
@@ -956,8 +1007,10 @@ wireguard_create_client() {
   NEXT_IP=$(wireguard_get_next_ip)
 
   if [ -z "$NEXT_IP" ]; then
-    echo "Fehler: Keine freie IP gefunden."
-    exit 1
+    echo "Fehler: Keine freie IP im Bereich ${WG_NET_PREFIX}.${START_IP}-${WG_NET_PREFIX}.${END_IP} gefunden."
+    echo "  -> Alle ${END_IP} Adressen vergeben? Entferne ungenutzte Clients (Menue 1 -> 4)."
+    exec {_wg_lock_fd}>&- 2>/dev/null || true
+    return 1
   fi
 
   echo "Vorgeschlagene freie IP: $NEXT_IP"
@@ -1106,7 +1159,7 @@ wireguard_remove_client() {
   echo ""
 
   read -p "Wirklich entfernen? [ja/NEIN]: " CONFIRM
-  if [ "$CONFIRM" != "ja" ]; then
+  if ! common_is_yes "$CONFIRM"; then
     echo "Abgebrochen."
     return
   fi
@@ -1155,11 +1208,13 @@ dashboard_check_environment() {
 
   if ! wg show "$WG_IFACE" >/dev/null 2>&1; then
     echo "Fehler: WireGuard Interface $WG_IFACE laeuft nicht."
+    echo "  -> Starten mit: systemctl restart wg-quick@$WG_IFACE"
     exit 1
   fi
 
   if [ ! -d "$CLIENT_DIR" ]; then
     echo "Fehler: Client-Verzeichnis nicht gefunden: $CLIENT_DIR"
+    echo "  -> Lege zuerst einen Client an (Menue 1 -> 1)."
     exit 1
   fi
 }
@@ -2270,7 +2325,7 @@ backup_menu() {
     echo ""
     return
   fi
-  if [ "$CONFIRM" != "ja" ]; then
+  if ! common_is_yes "$CONFIRM"; then
     echo "Abgebrochen."
     return
   fi
@@ -2293,7 +2348,24 @@ restore_menu() {
     return
   fi
   case "$RESTORE_CHOICE" in
-    ""|1) restore_execute 0 ;;
+    ""|1)
+      echo ""
+      echo "WARNUNG: Ein echter Restore ueberschreibt die aktuelle Konfiguration:"
+      echo "  - /etc/wireguard (Keys + wg0.conf)"
+      echo "  - Client-Verzeichnis, Docker-Stacks (bei Full-Restore)"
+      echo "  - WireGuard wird anschliessend neu gestartet (Tunnel kurz unterbrochen)"
+      echo ""
+      echo "Der aktuelle Zustand wird vorher automatisch gesichert."
+      echo ""
+      if ! read -p "Restore wirklich durchfuehren? [ja/NEIN]: " _rconfirm; then
+        echo ""; return
+      fi
+      if ! common_is_yes "$_rconfirm"; then
+        echo "Abgebrochen."
+        return
+      fi
+      restore_execute 0
+      ;;
     2) restore_execute 1 ;;
     3) return ;;
     *)
@@ -2308,23 +2380,27 @@ restore_menu() {
 main_menu() {
   while true; do
     app_banner
-    echo "1) Client Manager"
-    echo "2) Status Dashboard (Snapshot)"
-    echo "3) Status Dashboard (Live)"
-    echo "4) Backup erstellen"
-    echo "5) Restore starten"
-    echo "6) Speedtests"
-    echo "7) Hilfe"
-    echo "8) Beenden"
+    echo "  Verwalten"
+    echo "    1) Client Manager"
+    echo "    2) Status Dashboard (Snapshot)"
+    echo "    3) Status Dashboard (Live)"
+    echo ""
+    echo "  Wartung"
+    echo "    4) Backup erstellen"
+    echo "    5) Restore starten"
+    echo "    6) Speedtests"
+    echo ""
+    echo "    7) Hilfe"
+    echo "    8) Beenden"
     echo ""
 
-    if ! read -p "Auswahl: " CHOICE; then
+    if ! read -p "Auswahl [1]: " CHOICE; then
       echo ""
       echo "Beendet."
       exit 0
     fi
 
-    case "$CHOICE" in
+    case "${CHOICE:-1}" in
       1) client_manager_menu ;;
       2) dashboard_run "no" 2 "radar" ;;
       3) dashboard_live_menu ;;
