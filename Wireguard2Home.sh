@@ -3,7 +3,7 @@
 set -e
 
 APP_NAME="Wireguard2Home"
-W2H_VERSION="1.1.0"
+W2H_VERSION="1.2.0"
 CONFIG_FILE="${WIREGUARD2HOME_CONFIG_FILE:-/etc/wireguard2home.conf}"
 
 if [ -f "$CONFIG_FILE" ]; then

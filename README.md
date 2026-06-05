@@ -24,6 +24,7 @@ Eigenständiger WireGuard-VPN-Stack zum Überbrücken von CGNAT. Ein leichtgewic
 * [Hardware-Anforderungen](#hardware-anforderungen)
 * [Fehlerbehebung](#fehlerbehebung)
 * [Roadmap](#roadmap)
+* [Versionierung](#versionierung)
 * [Lizenz](#lizenz)
 
 ---
@@ -438,15 +439,29 @@ sudo /home/USERNAME/Wireguard2Home.sh
 
 ## Menü
 
+Beim Start zeigt eine Statuszeile den aktuellen Zustand (Tunnel aktiv?,
+Anzahl Clients, Gateway-Handshake, Endpoint):
+
 ```text
-1) Client Manager
-2) Status Dashboard (Snapshot)
-3) Status Dashboard (Live)
-4) Backup erstellen
-5) Restore starten
-6) Speedtests
-7) Hilfe
-8) Beenden
+========================================
+Wireguard2Home  v1.2.0
+========================================
+  Tunnel: aktiv     Clients: 2    Gateway: verbunden (vor 12s)
+  Endpoint: 203.0.113.10:51820
+========================================
+
+  Verwalten
+    1) Client Manager
+    2) Status Dashboard (Snapshot)
+    3) Status Dashboard (Live)
+
+  Wartung
+    4) Backup erstellen
+    5) Restore starten
+    6) Speedtests
+
+    7) Hilfe
+    8) Beenden
 ```
 
 ## Reboot-Verhalten
@@ -890,6 +905,41 @@ sudo ./install-wireguard2home.sh --role vps --with-monitoring
 * `Backup-Verschlüsselung` — mit `age` oder `gpg`
 * `Metrics Exporter` — Prometheus-Anbindung für historische Traffic-Visualisierung
 * `HA-/Warm-Standby-Modell` — zweiter VPS als Standby
+
+---
+
+# Versionierung
+
+Das Projekt folgt [Semantic Versioning](https://semver.org/lang/de/) (`MAJOR.MINOR.PATCH`):
+
+| Ziffer | Wann erhöhen | Beispiel |
+| --- | --- | --- |
+| **PATCH** (`1.2.x`) | Kleinere Fixes, Bugfixes, Doku | Endpoint-Erkennung, Backup-Pfad ergänzt |
+| **MINOR** (`1.x.0`) | Neue Features, größere Änderungen (abwärtskompatibel) | Status-Banner, Monitoring-Stack, `--update` |
+| **MAJOR** (`x.0.0`) | Große/breaking Änderungen | geändertes Config-Format, neue Architektur |
+
+Die aktuelle Version wird im Banner und über `--help` angezeigt und steckt in
+`W2H_VERSION` in jedem Script.
+
+## Changelog
+
+### v1.2.0
+* Status-Übersicht im Menü-Banner (Tunnel, Clients, Gateway-Handshake, Endpoint)
+* Sicherheitsabfrage vor echtem Restore; bessere Fehlermeldungen mit Lösungshinweis
+* Menü-Gruppierung (Verwalten/Wartung), konsistente Ja/Nein-Prompts
+* `wg syncconf` statt Service-Neustart beim Client-Anlegen/-Entfernen (keine Tunnel-Unterbrechung)
+* Datei-Lock gegen doppelte IP-Vergabe; `eval` durch `nameref` ersetzt (Security)
+* Redundante Standalone-Scripts entfernt — `Wireguard2Home.sh` ist alleinige Quelle
+* Backup/Restore vollständig: `wireguard2home.conf`, Uptime Kuma, CrowdSec; Docker-Netzwerk + Stack-Autostart beim Restore
+
+### v1.1.0
+* Optionaler Monitoring-Stack (Uptime Kuma, Watchtower, CrowdSec) und Reverse Proxy (NPM)
+* `--update`-Mechanismus, `--with-swap`, IPv4-bevorzugte Endpoint-Erkennung
+* NAT/Masquerade standardmäßig aktiv mit automatischer Interface-Erkennung
+
+### v1.0.0
+* Erstes Release: CGNAT-Bypass, VPS-Hub + Gateway-Host, Client-Manager mit QR-Code,
+  Live-Dashboard, Offsite-Backups, Restore, Self-contained Bootstrap
 
 ---
 

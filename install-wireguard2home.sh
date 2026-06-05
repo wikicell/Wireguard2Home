@@ -5,7 +5,7 @@
 set -euo pipefail
 
 APP_NAME="Wireguard2Home"
-W2H_VERSION="1.0.0"
+W2H_VERSION="1.2.0"
 RAW_BASE_URL="https://raw.githubusercontent.com/wikicell/Wireguard2Home/main"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -391,7 +391,7 @@ write_install_vps_sh() {
 set -euo pipefail
 
 APP_NAME="Wireguard2Home"
-W2H_VERSION="1.1.0"
+W2H_VERSION="1.2.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 resolve_user_home() {
@@ -1426,7 +1426,7 @@ write_install_gateway_sh() {
 set -euo pipefail
 
 APP_NAME="Wireguard2Home"
-W2H_VERSION="1.1.0"
+W2H_VERSION="1.2.0"
 PKG_MANAGER=""
 HAS_SYSTEMCTL=0
 
@@ -2023,7 +2023,7 @@ write_wireguard2home_sh() {
 set -e
 
 APP_NAME="Wireguard2Home"
-W2H_VERSION="1.1.0"
+W2H_VERSION="1.2.0"
 CONFIG_FILE="${WIREGUARD2HOME_CONFIG_FILE:-/etc/wireguard2home.conf}"
 
 if [ -f "$CONFIG_FILE" ]; then

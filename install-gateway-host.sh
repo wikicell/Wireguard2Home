@@ -3,7 +3,7 @@
 set -euo pipefail
 
 APP_NAME="Wireguard2Home"
-W2H_VERSION="1.1.0"
+W2H_VERSION="1.2.0"
 PKG_MANAGER=""
 HAS_SYSTEMCTL=0
 
