@@ -196,9 +196,9 @@ angezeigten Code zu scannen — keine manuelle Eingabe nötig.
 
 ![Client-Liste im Client-Manager](screenshots/client-list.png)
 
-**QR-Code zum direkten Scannen in der WireGuard-App**
+**QR-Code zum direkten Scannen in der WireGuard-App** *(Demo — keine echten Schlüssel)*
 
-![Client-Config als QR-Code](screenshots/client-qr.png)
+![Client-Config als QR-Code (Demo)](screenshots/client-qr.png)
 
 </div>
 
