@@ -1,12 +1,44 @@
-# Wireguard2Home
+<div align="center">
 
-> **Self-contained WireGuard VPN stack that bypasses CGNAT.** A lightweight VPS acts as hub; a Gateway-Host (Raspberry Pi or any Linux machine) bridges your entire home LAN through the encrypted tunnel — reachable from any device, anywhere in the world.
->
-> Features a single-script bootstrap installer with all sub-scripts embedded (no GitHub dependency at runtime), a live traffic dashboard with per-client RX/TX stats, a full client manager with QR-code export, automated offsite backups to the Gateway-Host, and a one-command restore. Supports full-tunnel, split-tunnel, and home-DNS filter modes. Runs on Debian, Ubuntu, Fedora, Arch, openSUSE and Raspberry Pi OS.
+# 🏠 Wireguard2Home
+
+**Self-contained WireGuard VPN stack that bypasses CGNAT.**
+
+Ein leichtgewichtiger VPS dient als Hub, ein Gateway-Host (Raspberry Pi oder jeder Linux-Rechner)
+brückt dein gesamtes Heimnetz durch den verschlüsselten Tunnel — erreichbar von jedem Gerät, überall.
+
+![Version](https://img.shields.io/badge/version-1.2.0-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Shell](https://img.shields.io/badge/shell-bash-121011?logo=gnu-bash&logoColor=white)
+![WireGuard](https://img.shields.io/badge/WireGuard-%2388171A?logo=wireguard&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Debian%20%7C%20Ubuntu%20%7C%20Fedora%20%7C%20Arch%20%7C%20RaspberryPi-lightgrey)
+
+</div>
 
 ---
 
-Eigenständiger WireGuard-VPN-Stack zum Überbrücken von CGNAT. Ein leichtgewichtiger VPS dient als Knotenpunkt; ein Gateway-Host (Raspberry Pi oder jeder andere Linux-Rechner) verbindet das gesamte Heimnetz verschlüsselt mit dem Tunnel — erreichbar von jedem Gerät, überall auf der Welt.
+```text
+        ┌─────────────┐         WireGuard          ┌──────────────┐        ┌────────────┐
+ 📱💻   │     VPS     │◄─────────  Tunnel  ────────►│ Gateway-Host │───────►│  Heimnetz  │
+ Clients│  (öffentl.) │      10.100.0.0/24          │ (Raspberry)  │  NAT   │ 192.168.x  │
+        │   Hub/Relay │                             │  CGNAT-Seite │        │  NAS·IoT·… │
+        └─────────────┘                             └──────────────┘        └────────────┘
+```
+
+**Warum?** Dein Heimanschluss hat hinter CGNAT keine öffentlich erreichbare IP. Der VPS hat eine —
+und der Gateway-Host baut den Tunnel von innen auf. Ergebnis: vollwertiger Fernzugriff aufs Heimnetz,
+ganz ohne Portfreigabe oder DynDNS.
+
+## ✨ Highlights
+
+* 🚀 **Ein-Datei-Bootstrap** — alle Sub-Scripts eingebettet, kein Laufzeit-Download nötig
+* 📊 **Live-Dashboard** — RX/TX pro Client (live, täglich, monatlich), Online-Status, Handshakes
+* 📱 **Client-Manager** — neue Clients inkl. QR-Code für die WireGuard-App in Sekunden
+* 🔀 **Tunnel-Modi** — Full-Tunnel, Split-Tunnel, Heimnetz-DNS-Filter
+* 💾 **Offsite-Backups** — automatisch zum Gateway-Host, Ein-Befehl-Restore mit Integritätscheck
+* 🛡️ **Security-Stack** *(optional)* — CrowdSec, Fail2Ban, Reverse Proxy mit Let's Encrypt
+* 📈 **Monitoring** *(optional)* — Uptime Kuma, Watchtower, Pushover-Benachrichtigungen
+* 🐧 **Breite Plattform-Unterstützung** — Debian, Ubuntu, Fedora, Arch, openSUSE, Raspberry Pi OS
 
 ---
 
