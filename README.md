@@ -2,10 +2,11 @@
 
 # 🏠 Wireguard2Home
 
-**Self-contained WireGuard VPN stack that bypasses CGNAT.**
+**Self-contained WireGuard VPN stack that bypasses CGNAT & DS-Lite.**
 
 Ein leichtgewichtiger VPS dient als Hub, ein Gateway-Host (Raspberry Pi oder jeder Linux-Rechner)
 brückt dein gesamtes Heimnetz durch den verschlüsselten Tunnel — erreichbar von jedem Gerät, überall.
+Funktioniert auch hinter **DS-Lite** und **CGNAT**, wo keine eigene öffentliche IPv4 verfügbar ist.
 
 ![Version](https://img.shields.io/badge/version-1.2.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -18,16 +19,32 @@ brückt dein gesamtes Heimnetz durch den verschlüsselten Tunnel — erreichbar 
 ---
 
 ```text
-        ┌─────────────┐         WireGuard          ┌──────────────┐        ┌────────────┐
- 📱💻   │     VPS     │◄─────────  Tunnel  ────────►│ Gateway-Host │───────►│  Heimnetz  │
- Clients│  (öffentl.) │      10.100.0.0/24          │ (Raspberry)  │  NAT   │ 192.168.x  │
-        │   Hub/Relay │                             │  CGNAT-Seite │        │  NAS·IoT·… │
-        └─────────────┘                             └──────────────┘        └────────────┘
+ 📱💻 VPN-Clients ──┐
+ 🌐 HTTPS-Besucher ─┤
+                    ▼
+        ┌───────────────────────┐                            ┌──────────────┐    ┌────────────┐
+        │         VPS           │     WireGuard-Tunnel        │ Gateway-Host │    │  Heimnetz  │
+        │    (öffentl. IPv4)    │◄──────────────────────────►│ (Raspberry)  │───►│ 192.168.x  │
+        │                       │      10.100.0.0/24          │              │NAT │            │
+        │  • WireGuard Hub      │                            │ DS-Lite /    │    │ • NAS      │
+        │  • Reverse Proxy ─────┼──► HTTPS durch den Tunnel ─┼─────────────►│    │ • Smart-   │
+        │    (Let's Encrypt)    │    zu Heimnetz-Diensten     │ CGNAT-Seite  │    │   Home·IoT │
+        └───────────────────────┘                            └──────────────┘    └────────────┘
+
+  VPN:           eigene Geräte erreichen das ganze Heimnetz (WireGuard-App)
+  Reverse Proxy: status.deinedomain.de → HTTPS → Dienst im Heimnetz (ohne VPN-Client)
 ```
 
-**Warum?** Dein Heimanschluss hat hinter CGNAT keine öffentlich erreichbare IP. Der VPS hat eine —
-und der Gateway-Host baut den Tunnel von innen auf. Ergebnis: vollwertiger Fernzugriff aufs Heimnetz,
-ganz ohne Portfreigabe oder DynDNS.
+**Warum?** Dein Heimanschluss hat hinter **DS-Lite oder CGNAT** keine öffentlich erreichbare
+IPv4-Adresse — eingehende Verbindungen und klassische Portfreigaben sind damit unmöglich.
+Der VPS hat eine feste öffentliche IP, und der Gateway-Host baut den Tunnel von innen auf.
+
+Ergebnis: **zweierlei Zugriff von außen**
+* 🔒 **VPN** — volle Heimnetz-Erreichbarkeit für deine eigenen Geräte (WireGuard-App)
+* 🌍 **Reverse Proxy** — einzelne Heimnetz-Dienste per HTTPS-Domain öffentlich verfügbar machen
+  (z. B. `status.deinedomain.de`), ohne VPN-Client — mit automatischem Let's-Encrypt-Zertifikat
+
+Alles ganz ohne Portfreigabe oder DynDNS am Heimanschluss.
 
 ## ✨ Highlights
 
@@ -101,19 +118,31 @@ sudo /root/Wireguard2Home.sh
 ## Topologie
 
 ```text
-Internet
-   │
-   ▼
-VPS (WireGuard Hub, öffentliche IP)
-   │  WireGuard-Tunnel
-   ▼
-Gateway-Host (Raspberry Pi o. ä., hinter CGNAT)
-   │  Routing + NAT
-   ▼
-Heimnetzwerk
+                Internet
+                   │
+   VPN-Clients ────┤──── HTTPS (Reverse Proxy)
+                   ▼
+   ┌───────────────────────────────────┐
+   │   VPS  (öffentliche IP, Hub)       │
+   │   • WireGuard Server               │
+   │   • Reverse Proxy + Let's Encrypt  │
+   └───────────────┬───────────────────┘
+                   │  WireGuard-Tunnel (10.100.0.0/24)
+                   ▼
+   ┌───────────────────────────────────┐
+   │   Gateway-Host (Raspberry Pi)      │
+   │   hinter DS-Lite / CGNAT           │
+   │   • Routing + NAT/Masquerade       │
+   └───────────────┬───────────────────┘
+                   │
+                   ▼
+   Heimnetzwerk (NAS, Smart Home, Web-UIs, IoT …)
 ```
 
-Das Projekt löst das CGNAT-Problem: Der Heimanschluss hat keine öffentlich erreichbare IP. Der VPS hat eine feste IP und dient als Hub — der Gateway-Host baut den Tunnel aktiv auf.
+Das Projekt löst das **DS-Lite-/CGNAT-Problem**: Der Heimanschluss hat keine öffentlich
+erreichbare IPv4. Der VPS hat eine feste IP und dient als Hub — der Gateway-Host baut den
+Tunnel aktiv von innen auf. Über den Reverse Proxy auf dem VPS lassen sich einzelne
+Heimnetz-Dienste zusätzlich per HTTPS-Domain öffentlich erreichbar machen (ohne VPN-Client).
 
 ## Komponenten
 
