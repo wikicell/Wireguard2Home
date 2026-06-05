@@ -1,8 +1,8 @@
 <div align="center">
 
-# 🏠 Wireguard2Home
+<img src="assets/logo-banner.png" alt="Wireguard2Home" width="620">
 
-**Self-contained WireGuard VPN stack that bypasses CGNAT & DS-Lite.**
+### Self-contained WireGuard VPN stack that bypasses CGNAT & DS-Lite
 
 Ein leichtgewichtiger VPS dient als Hub, ein Gateway-Host (Raspberry Pi oder jeder Linux-Rechner)
 brückt dein gesamtes Heimnetz durch den verschlüsselten Tunnel — erreichbar von jedem Gerät, überall.

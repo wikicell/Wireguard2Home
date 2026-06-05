@@ -1,0 +1,37 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="shieldFill" x1="256" y1="44" x2="256" y2="476" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2e3440"/>
+      <stop offset="1" stop-color="#1b1f2a"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="140" y1="150" x2="380" y2="360" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#9fd6e3"/>
+      <stop offset="1" stop-color="#4ec9d4"/>
+    </linearGradient>
+    <linearGradient id="roof" x1="256" y1="150" x2="256" y2="232" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#a8dde9"/>
+      <stop offset="1" stop-color="#6fc4d3"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Schild -->
+  <path d="M256 44 L440 106 V272 C440 384 360 438 256 472 C152 438 72 384 72 272 V106 Z"
+        fill="url(#shieldFill)" stroke="url(#cyan)" stroke-width="16" stroke-linejoin="round"/>
+
+  <!-- Tunnel-Bogen hinter dem Haus -->
+  <path d="M138 366 C138 250 374 250 374 366"
+        fill="none" stroke="#4ec9d4" stroke-width="18" stroke-linecap="round" opacity="0.45"/>
+
+  <!-- Haus -->
+  <!-- Dach -->
+  <path d="M256 138 L368 232 L144 232 Z" fill="url(#roof)" stroke="#1b1f2a" stroke-width="4" stroke-linejoin="round"/>
+  <!-- Körper -->
+  <rect x="178" y="232" width="156" height="118" rx="10" fill="url(#cyan)" stroke="#1b1f2a" stroke-width="4"/>
+  <!-- Tür / Tunnel-Eingang -->
+  <path d="M236 350 V286 a20 20 0 0 1 40 0 V350 Z" fill="#1b1f2a"/>
+
+  <!-- Datenpakete durch den Tunnel -->
+  <circle cx="138" cy="366" r="11" fill="#9fd6e3"/>
+  <circle cx="256" cy="384" r="14" fill="#eceff4"/>
+  <circle cx="374" cy="366" r="11" fill="#9fd6e3"/>
+</svg>
