@@ -185,6 +185,38 @@ Clients (Smartphones, Laptops, etc.) werden über das interaktive Menü angelegt
 * QR-Code erzeugen und als PNG speichern
 * Server-Config live aktualisieren (ohne Tunnel-Unterbrechung)
 
+Jeder Client wird als `.conf`-Datei **und** als QR-Code-PNG gespeichert
+(Standard: `/root/wg-clients/`). Auf dem Smartphone genügt es, in der
+offiziellen **WireGuard-App** „Aus QR-Code hinzufügen" zu wählen und den
+angezeigten Code zu scannen — keine manuelle Eingabe nötig.
+
+<div align="center">
+
+**Client-Übersicht**
+
+![Client-Liste im Client-Manager](screenshots/client-list.png)
+
+**QR-Code zum direkten Scannen in der WireGuard-App**
+
+![Client-Config als QR-Code](screenshots/client-qr.png)
+
+</div>
+
+Eine erzeugte Client-Config sieht so aus (Schlüssel gekürzt):
+
+```ini
+[Interface]
+PrivateKey = <client-private-key>
+Address = 10.100.0.5/32
+DNS = 192.168.50.53
+
+[Peer]
+PublicKey = <vps-server-public-key>
+Endpoint = vpn.deinedomain.de:51820
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+```
+
 ## DNS-Auswahl
 
 Beim Erstellen eines Clients wird ein DNS-Server zugewiesen. Die Optionen sind in drei Gruppen aufgeteilt:
@@ -263,14 +295,30 @@ Nur ausgewählte Hosts/Netze über VPN.
 
 ## Status Dashboard
 
-Integriertes Live-Dashboard mit:
+Integriertes Live-Dashboard direkt im Terminal mit:
 
 * Online-/Offline-/Stale-Status pro Client
 * letztem Handshake, interner WireGuard-IP, externem Endpoint
-* RX/TX Traffic (live, täglich, monatlich)
+* RX/TX Traffic (live, täglich, monatlich) mit Aktivitätsbalken
 
-Ansichten: `radar` (Übersicht) und `inspector` (Detailansicht).  
-Tasten: `v`/`tab` zum Umschalten, `q` zum Beenden.
+Ansichten: `radar` (kompakte Übersicht) und `inspector` (Detailansicht mit Ranglisten).
+Tasten: `v`/`tab` zum Umschalten, `r` neu laden, `q` zum Beenden.
+
+<div align="center">
+
+**Radar — kompakte Live-Übersicht**
+
+![Dashboard Radar-Ansicht](screenshots/dashboard-radar.png)
+
+**Inspector — Detailansicht mit Ranglisten**
+
+![Dashboard Inspector-Ansicht](screenshots/dashboard-inspector.png)
+
+**Hauptmenü mit Status-Banner**
+
+![Hauptmenü mit Statuszeile](screenshots/menu.png)
+
+</div>
 
 ## Speedtests
 
