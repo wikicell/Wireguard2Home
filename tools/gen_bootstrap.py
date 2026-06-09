@@ -10,15 +10,14 @@ REPO = "/Users/marcellbelles/CODING/SwiftUI/Gate2homeTunnel"
 BOOT = os.path.join(REPO, "install-wireguard2home.sh")
 
 # delimiter -> source filename (order irrelevant for in-place replace)
+# Nur diese drei Scripts werden im Bootstrap eingebettet. Wireguard2Home.sh ist
+# autark (Client-Manager, Dashboard, Backup/Restore sind inline) — die frueheren
+# Standalone-Scripts (create-wg-client.sh, wireguard-dashboard.sh, backup-/
+# restore-wireguard2home.sh, runtime-paths.sh) wurden entfernt.
 EMBEDS = {
-    "____W2H_RUNTIME_PATHS____": "runtime-paths.sh",
     "____W2H_INSTALL_VPS____": "install-vps.sh",
     "____W2H_INSTALL_GATEWAY____": "install-gateway-host.sh",
     "____W2H_MAIN_SCRIPT____": "Wireguard2Home.sh",
-    "____W2H_DASHBOARD____": "wireguard-dashboard.sh",
-    "____W2H_CREATE_CLIENT____": "create-wg-client.sh",
-    "____W2H_BACKUP____": "backup-wireguard2home.sh",
-    "____W2H_RESTORE____": "restore-wireguard2home.sh",
 }
 
 

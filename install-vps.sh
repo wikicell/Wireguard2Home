@@ -50,6 +50,10 @@ WG_LISTEN_PORT="51820"
 WG_ENDPOINT="${WIREGUARD2HOME_ENDPOINT:-}"
 LAN_SUBNET="192.168.50.0/24"
 LAN_SUBNET_EXPLICIT=0
+# NAT/Masquerade fuer ausgehenden Internet-Verkehr der Clients (Full-Tunnel).
+# Standard aktiv; Interface wird automatisch ueber die Default-Route erkannt.
+ENABLE_MASQUERADE=1
+MASQUERADE_INTERFACE=""
 
 CLIENT_DIR="${WIREGUARD2HOME_CLIENT_DIR:-${SERVICE_HOME}/wg-clients}"
 if [ -n "${WIREGUARD2HOME_STATE_DIR:-}" ]; then
@@ -120,6 +124,8 @@ Optionen:
   --speedtest-host HOST        Zielhost fuer den Tunnel-Speedtest
   --speedtest-ssh-key PFAD     SSH-Key fuer den Tunnel-Speedtest
   --speedtest-size-mb N        Datenmenge pro Speedtest-Richtung
+  --masquerade-interface IFACE Ausgehendes Internet-Interface fuer NAT (Default: automatisch)
+  --no-masquerade              NAT/Masquerade deaktivieren (Standard: aktiv, fuer Full-Tunnel noetig)
   --with-ufw-fail2ban          Installiert zusaetzlich ufw und fail2ban (Host)
   --with-docker                Installiert zusaetzlich docker.io und docker-compose-plugin
   --with-reverse-proxy         Reverse-Proxy-Stack: Nginx Proxy Manager (impliziert --with-docker)
@@ -273,6 +279,14 @@ parse_args() {
       --speedtest-size-mb)
         SPEEDTEST_SIZE_MB="$2"
         shift 2
+        ;;
+      --masquerade-interface)
+        MASQUERADE_INTERFACE="$2"
+        shift 2
+        ;;
+      --no-masquerade)
+        ENABLE_MASQUERADE=0
+        shift
         ;;
       --with-ufw-fail2ban)
         ENABLE_UFW_FAIL2BAN=1
@@ -717,12 +731,66 @@ ensure_server_keypair() {
   chmod 644 "$public_key"
 }
 
+detect_wan_interface() {
+  # Ermittelt das ausgehende Internet-Interface ueber die Default-Route.
+  # Ergebnis: Interface-Name (z. B. eth0, ens6, enp1s0) oder leer bei Fehler.
+  ip route show default 2>/dev/null | awk '/default/ {print $5; exit}'
+}
+
+write_nat_lines() {
+  # Gibt aktive (oder im Fehlerfall auskommentierte) NAT-Zeilen aus, die der
+  # VPS fuer ausgehenden Internet-Verkehr der Clients (Full-Tunnel) braucht.
+  if [ "$ENABLE_MASQUERADE" -ne 1 ]; then
+    cat <<EOF
+# NAT/Masquerade deaktiviert (--no-masquerade). Fuer Full-Tunnel manuell aktivieren:
+# PostUp = iptables -A FORWARD -i ${WG_IFACE} -j ACCEPT; iptables -t nat -A POSTROUTING -s ${WG_NET_CIDR} -o IFACE -j MASQUERADE
+# PostDown = iptables -D FORWARD -i ${WG_IFACE} -j ACCEPT; iptables -t nat -D POSTROUTING -s ${WG_NET_CIDR} -o IFACE -j MASQUERADE
+EOF
+    return
+  fi
+
+  if [ -z "$MASQUERADE_INTERFACE" ]; then
+    MASQUERADE_INTERFACE="$(detect_wan_interface)"
+  fi
+
+  if [ -z "$MASQUERADE_INTERFACE" ]; then
+    log "Warnung: Internet-Interface konnte nicht automatisch erkannt werden."
+    log "NAT-Zeilen werden als Kommentar eingetragen – Clients haetten dann KEIN Internet."
+    log "Bitte --masquerade-interface IFACE angeben oder wg0.conf manuell ergaenzen."
+    cat <<EOF
+# PostUp = iptables -A FORWARD -i ${WG_IFACE} -j ACCEPT; iptables -t nat -A POSTROUTING -s ${WG_NET_CIDR} -o IFACE -j MASQUERADE
+# PostDown = iptables -D FORWARD -i ${WG_IFACE} -j ACCEPT; iptables -t nat -D POSTROUTING -s ${WG_NET_CIDR} -o IFACE -j MASQUERADE
+EOF
+    return
+  fi
+
+  log "NAT/Masquerade-Interface erkannt: ${MASQUERADE_INTERFACE}"
+  cat <<EOF
+PostUp = iptables -A FORWARD -i ${WG_IFACE} -j ACCEPT; iptables -t nat -A POSTROUTING -s ${WG_NET_CIDR} -o ${MASQUERADE_INTERFACE} -j MASQUERADE
+PostDown = iptables -D FORWARD -i ${WG_IFACE} -j ACCEPT; iptables -t nat -D POSTROUTING -s ${WG_NET_CIDR} -o ${MASQUERADE_INTERFACE} -j MASQUERADE
+EOF
+}
+
 write_wg_template_if_missing() {
   local private_key="${WG_DIR}/server_private.key"
+  local nat_lines=""
+  nat_lines="$(write_nat_lines || true)"
 
   if [ -f "$WG_CONF" ]; then
     chmod 600 "$WG_CONF"
     log "${WG_CONF} existiert bereits. Bestehende Konfiguration bleibt erhalten."
+    # NAT bei bestehender Config nachruesten, falls noch keine PostUp-Zeile da ist
+    if [ "$ENABLE_MASQUERADE" -eq 1 ] && ! grep -q "^PostUp" "$WG_CONF" 2>/dev/null && [ -n "$nat_lines" ]; then
+      local tmp_conf
+      tmp_conf="$(mktemp)"
+      awk -v nat="$nat_lines" '
+        /^SaveConfig/ { print; print nat; next }
+        { print }
+      ' "$WG_CONF" > "$tmp_conf"
+      install -m 600 "$tmp_conf" "$WG_CONF"
+      rm -f "$tmp_conf"
+      log "NAT/Masquerade-Regeln in bestehende ${WG_CONF} nachgetragen."
+    fi
     return
   fi
 
@@ -732,10 +800,7 @@ Address = ${WG_SERVER_IP_CIDR}
 ListenPort = ${WG_LISTEN_PORT}
 PrivateKey = $(cat "$private_key")
 SaveConfig = false
-
-# Optionales NAT-Beispiel fuer Internet-Ausleitung:
-# PostUp = iptables -A FORWARD -i ${WG_IFACE} -j ACCEPT; iptables -t nat -A POSTROUTING -s ${WG_NET_CIDR} -o eth0 -j MASQUERADE
-# PostDown = iptables -D FORWARD -i ${WG_IFACE} -j ACCEPT; iptables -t nat -D POSTROUTING -s ${WG_NET_CIDR} -o eth0 -j MASQUERADE
+${nat_lines}
 
 # Raspberry-Peer hier ergaenzen, z. B.:
 # [Peer]
