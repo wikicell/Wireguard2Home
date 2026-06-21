@@ -63,6 +63,7 @@ Alles ganz ohne Portfreigabe oder DynDNS am Heimanschluss.
 
 * [Schnellstart](#schnellstart)
 * [Architektur](#architektur)
+* [Gateway-Optionen (Pi vs. Fritzbox)](docs/GATEWAY-OPTIONEN.md)
 * [Features](#features)
 * [Installation](#installation)
 * [Betrieb](#betrieb)
@@ -170,6 +171,11 @@ Heimnetz-Dienste zusätzlich per HTTPS-Domain öffentlich erreichbar machen (ohn
 
 WireGuard-Netz: `10.100.0.0/24`  
 Heimnetz (Beispiel): `192.168.50.0/24` — beim Setup auf das eigene Subnetz anpassen.
+
+> **Alternative:** Statt Raspberry Pi kann eine **Fritzbox (ab FRITZ!OS 7.50)** den
+> Gateway-Host übernehmen — oft mit deutlich höherem WireGuard-Durchsatz. Vergleich,
+> Plex/Reverse-Proxy-Datenfluss, Messergebnisse und reversibler Testplan:
+> [docs/GATEWAY-OPTIONEN.md](docs/GATEWAY-OPTIONEN.md)
 
 ---
 
