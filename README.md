@@ -274,6 +274,14 @@ AllowedIPs = 0.0.0.0/0
 
 Gesamter Traffic läuft über VPN. Sinnvoll für Reisen und fremde WLANs.
 
+> **VPS-Voraussetzung:** Auf dem Server muss in `wg0.conf` **Masquerade** für das WireGuard-Netz
+> (`10.100.0.0/24` → WAN-Interface, z. B. `eth0`) aktiv sein — Standard bei `install-vps.sh`.
+> Ohne NAT erreichen Full-Tunnel-Clients nur das Heimnetz (über den Gateway-Peer), aber kein
+> Internet (Speedtest, Surfen). Siehe `scripts/vps-wg-postup.sh`.
+>
+> **Traffic sparen:** Für reinen Heimzugriff einen zweiten Client mit Split Tunnel anlegen
+> (`AllowedIPs = 192.168.x.0/24, 10.100.0.0/24`) — Internet bleibt dann lokal auf dem Gerät.
+
 ### Split Tunnel Heimnetz
 
 ```ini

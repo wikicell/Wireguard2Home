@@ -133,10 +133,13 @@ reinen Leitung (Ookla am PC kann deutlich höhere Werte zeigen als curl/iperf vo
 
 Wenn in der Fritzbox-WG-Config im `[Interface]`-Block eine reine Tunnel-IP (`x.x.x.x/32`)
 als `Address` steht, erzwingt die Fritzbox intern **Source-NAT**. Geräte im Heimnetz
-erscheinen dann nicht mit ihrer echten IP.
+erscheinen dann nicht mit ihrer echten IP — Ping auf die Fritzbox-LAN-IP antwortet von
+der Tunnel-IP (`10.100.0.x`).
 
-**Lösung:** `Address` = echte LAN-IP der Fritzbox, z. B. `192.168.x.1/24`
+**Teil-Lösung:** Exportierte Config anpassen: `Address = 192.168.x.1/24` statt `/32`
 ([Details](https://florian-puschmann.de/fritzbox-mit-pfsense-ueber-wireguard-verbinden-die-versteckte-konfigurationsfalle/)).
+→ Fritzbox antwortet dann mit korrekter LAN-IP, **leitet aber im VPN-Anbieter-Modus
+trotzdem nicht zuverlässig an andere LAN-Geräte weiter** (siehe Testergebnisse unten).
 
 ### DMZ / Exposed Host auf dem Pi
 
@@ -158,6 +161,21 @@ erscheinen dann nicht mit ihrer echten IP.
 | Client-Manager auf VPS | ✅ | ✅ |
 | Reverse Proxy (NPM) | ✅ | ✅ (Backend-IP = Plex-LAN-IP) |
 | NAT/Masquerade Heimnetz | Pi (`iptables`) | Fritzbox (intern) |
+| NAT Full-Tunnel-Clients → Internet | VPS (`MASQUERADE` in `wg0.conf`) | VPS (`MASQUERADE` in `wg0.conf`) |
+
+### VPS: zwei NAT-Aufgaben (nicht verwechseln)
+
+| Traffic | Wer macht NAT? | PostUp auf dem VPS |
+| --- | --- | --- |
+| NPM → Plex/NAS (`192.168.x.x`) | Fritzbox leitet LAN weiter | `DOCKER-USER`-Regeln (NPM/Docker → `wg0`) |
+| Handy Full Tunnel → Internet | **VPS** maskiert `10.100.0.0/24` Richtung `eth0` | `MASQUERADE` in `wg0.conf` |
+
+Bei der Netcup-Migration war `MASQUERADE` kurzzeitig entfernt (nur FORWARD + Docker-Regeln).
+Full-Tunnel-Clients konnten das Heimnetz erreichen, aber kein Internet/Speedtest. Korrektur:
+`scripts/vps-wg-postup.sh` (wird von `netcup-migrate-production.sh` und `netcup-fritzbox-minimal.sh` genutzt).
+
+**Boot-Reihenfolge:** `wg-quick@wg0` startet nach `docker.service`, da die `DOCKER-USER`-Chain
+erst dann existiert. Zusätzlich: `gate2home-docker-wg-routes.service` zieht NPM-Regeln nach.
 
 ---
 
@@ -259,15 +277,142 @@ Heim-Upload / Ookla-Werte).
 
 ---
 
-## Fritzbox-Konfigurationsvorlage
+## Fritzbox-Testergebnisse (Praxis, Juni 2025)
 
-> Platzhalter anpassen. `Address` in `[Interface]` = **echte Fritzbox-LAN-IP**.
+Getestet: Fritzbox **7690**, FRITZ!OS mit WireGuard, Glasfaser-Anschluss, VPS als Hub,
+Pi parallel als produktiver Gateway (`10.100.0.2`).
+
+### Konfigurationsvarianten
+
+| Variante | Ergebnis |
+| --- | --- |
+| Import mit `Address = 10.100.0.12/32` (VPN-Anbieter-Modus) | Tunnel grün, Fritzbox-LAN-Ping antwortet von Tunnel-IP (NAT) |
+| Export angepasst: `Address = 192.168.x.1/24`, neu importiert | Fritzbox-LAN-Ping antwortet korrekt von `192.168.x.1` |
+| Geräteliste „Heimgeräte freigeben“ | Pi taucht nicht auf — Option ist für **Outbound** (Internet über VPN), nicht für Inbound-Routing |
+
+### Erreichbarkeit (vom VPS aus)
+
+| Ziel | Pi-Gateway (`10.100.0.2`) | Fritzbox-Test (`192.168.x.0/24` via FB-Peer) |
+| --- | --- | --- |
+| Gateway-Tunnel-IP | ✅ Ping ~16 ms | ❌ `10.100.0.12` nach LAN-IP-Umstellung nicht mehr aktiv |
+| Fritzbox LAN-IP (`192.168.x.1`) | — | ✅ Ping ~16 ms (nach `/24`-Fix) |
+| Andere LAN-Geräte (z. B. Pi `192.168.x.198`) | ✅ über Pi-Peer | ❌ kein Ping, keine Pakete auf `tcpdump` am Pi |
+| Heimnetz-Services (Monitoring) | ✅ typisch über Pi-Peer + NPM | Abhängig vom Prüfpfad (siehe unten) |
+
+### Durchsatz (iperf3, TCP)
+
+| Pfad | Richtung | Ca.-Wert |
+| --- | --- | --- |
+| VPS ↔ Pi (Tunnel `10.100.0.2`) | VPS → Pi | ~113 Mbit/s |
+| VPS ↔ Pi (Tunnel `10.100.0.2`) | Pi → VPS | ~194–211 Mbit/s |
+| VPS extern (Cloudflare) | Download | >1 Gbit/s |
+| Fritzbox-Pfad zu LAN-Geräten | — | Nicht messbar (kein Forwarding) |
+
+### Zwischenfazit Fritzbox
+
+- **VPN-Anbieter-Modus** eignet sich nicht als vollwertiger Gate2home-Gateway-Ersatz.
+- **Erreichbarkeit im Monitoring** kann trotzdem „grün“ sein, wenn Prüfungen über den
+  **Pi-Tunnel**, **NPM/Reverse-Proxy** oder **VPN-Clients** laufen — das ist kein
+  Widerspruch zu den Fritzbox-Forwarding-Tests.
+- Für **Performance als Hauptziel** bleibt der Pi-Gateway (oder künftig LAN-LAN-Modus
+  „Router anderer Hersteller“) relevant — nicht der VPN-Anbieter-Import.
+
+### Offen / nächster Versuch
+
+- [ ] LAN-LAN-Assistent („WireGuard-fähiger Router“) statt VPN-Anbieter-Import
+- [ ] Performance-Test mit klar definiertem Prüfpfad (siehe nächster Abschnitt)
+- [ ] Fritzbox-Test-Peer am VPS aufräumen nach Abschluss der Experimente
+
+---
+
+## Monitoring vs. Performance-Test
+
+| | Monitoring (z. B. Uptime Kuma) | Performance-Test (iperf3) |
+| --- | --- | --- |
+| **Frage** | „Ist der Dienst erreichbar?“ | „Wie viel Mbit/s schafft der Pfad?“ |
+| **Typisch** | HTTP/TCP-Connect, Ping, kleine Payload | Dauerlast, viele MByte/s |
+| **Pfad** | Oft NPM → LAN-IP oder VPN-Client → LAN | Muss exakt definiert werden |
+| **Ergebnis** | Grün ab ~1 erfolgreicher Request | Plateau bei realem Durchsatz-Limit |
+
+**Monitoring grün + iperf ~110 Mbit** schließen sich nicht aus: Der Dienst antwortet,
+der Tunnel ist aber bandbreitenbegrenzt.
+
+---
+
+## Valider Performance-Test — Methodik
+
+### Was gemessen werden soll (Pfad festlegen)
+
+Vor jedem Test **einen** Prüfpfad benennen:
+
+```text
+A) VPS → Gateway-Host (Tunnel-IP)          # Hub ↔ Gateway, Basis
+B) VPS → LAN-Gerät (Heimnetz-IP)          # z. B. Plex-Host, NPM-Backend
+C) Gateway-Host → VPS                      # Upload-Richtung (Streaming nach außen)
+D) VPN-Client → LAN-Gerät                  # Endnutzer-Perspektive
+E) Internet → NPM → LAN-Gerät              # Reverse-Proxy-Pfad (Plex öffentlich)
+```
+
+Jeder Pfad kann **unterschiedliche** Mbit-Zahlen liefern. Vergleiche nur gleiche Pfade.
+
+### Technische Voraussetzungen
+
+| # | Voraussetzung | Warum |
+| --- | --- | --- |
+| 1 | **iperf3** auf beiden Endpunkten des Pfads | Standard-Messwerkzeug; in Gate2homeTunnel auf VPS + Pi installiert |
+| 2 | **SSH-Zugang** VPS → Gateway (Speedtest-Key) | Server starten, Tests automatisieren |
+| 3 | **Kein paralleler Lasttest** | Sonst verfälschte Werte |
+| 4 | **Klare Peer-Situation** | Pi- und Fritzbox-Peer nicht unbeabsichtigt mischen |
+| 5 | **30–60 s Wartefenster** | Kein Plex-Transcode, kein großer Download parallel |
+| 6 | **4 parallele TCP-Streams, 20 s** | Entspricht verbessertem Gate2homeTunnel-Speedtest |
+
+### Empfohlene Kommandos (auf dem VPS)
+
+```bash
+# Pfad A: VPS → Gateway (4 Streams)
+iperf3 -c 10.100.0.2 -t 20 -P 4 -f m
+
+# Pfad C: Gateway → VPS (4 Streams)
+ssh root@10.100.0.2 iperf3 -c 10.100.0.1 -t 20 -P 4 -f m
+
+# Pfad B: VPS → Plex-Host im LAN (iperf3 -s auf Plex-Host oder NAS nötig)
+iperf3 -c 192.168.x.PLEX -t 20 -P 4 -f m
+```
+
+Eingebauter Test: `Wireguard2Home.sh` → Menü → Speedtests (nutzt Pfad A + C).
+
+### Was wir vom Betreiber brauchen
+
+1. **Welcher Pfad ist das Hauptziel?** (z. B. Plex-Streaming = Pfad C oder E)
+2. **IP des Plex-/Service-Hosts** im Heimnetz (für Pfad B/E)
+3. **Läuft der Fritzbox-Test-Peer noch parallel?** (ja/nein — beeinflusst Routing)
+4. **Monitoring-Setup kurz beschreiben:** prüft Kuma NPM-URL, LAN-IP direkt, oder VPN?
+5. **Optional:** iperf3 auf Plex-Host/NAS installierbar? (für realistischen Pfad B)
+6. **Wartungsfenster** (~5 Min.) ohne aktive Streams
+
+### Erfolgskriterien (Beispiel Performance-Ziel)
+
+| Szenario | Mindest-Ziel | Stretch |
+| --- | --- | --- |
+| 1× 4K Direct Play von außen | Pfad C ≥ 80 Mbit/s | ≥ 200 Mbit/s |
+| 3× 1080p parallel | Pfad C ≥ 40 Mbit/s | ≥ 100 Mbit/s |
+| NPM/Plex öffentlich | Pfad E messen | Vergleich mit Pfad C |
+
+---
+
+## Fritzbox-Konfigurationsvorlage (Import-Datei)
+
+> **Wichtig:** Für den **Import in die Fritzbox** (VPN-Anbieter-Wizard) gilt ein
+> anderes Format als für manuelle `wg0.conf` auf Linux. Die `Address` muss die
+> **Tunnel-IP** sein (`/32`), nicht die LAN-IP der Fritzbox.
+>
+> Die LAN-IP-Regel (`192.168.x.1/24`) per Export-Anpassung behebt NAT auf der Fritzbox
+> selbst, ersetzt aber **nicht** den LAN-LAN-Modus für Weiterleitung an andere Geräte.
 
 ```ini
 [Interface]
-# WICHTIG: LAN-IP der Fritzbox, nicht nur /32-Tunnel-IP
-Address = 192.168.x.1/24
-PrivateKey = <FRITZBOX_PRIVATE_KEY>
+PrivateKey = <wird erzeugt — nie ins Git committen>
+Address = 10.100.0.12/32
 
 [Peer]
 PublicKey = <VPS_WG_PUBLIC_KEY>
@@ -275,6 +420,22 @@ Endpoint = vpn.example.com:51820
 AllowedIPs = 10.100.0.0/24
 PersistentKeepalive = 25
 ```
+
+### Fritzbox-UI (7690, FRITZ!OS 7.50+)
+
+Laut [AVM-Anleitung](https://uk.fritz.com/service/knowledge-base/dok/FRITZ-Box-7690/3688_Connecting-the-FRITZ-Box-to-a-VPN-provider-via-WireGuard/):
+
+1. *Internet → Freigaben → VPN (WireGuard) → Verbindung hinzufügen*
+2. **„Netzwerke verbinden“** (Link Networks) — nicht „Einzelnes Gerät“
+3. „Bereits am entfernten Standort eingerichtet?“ → **Ja**
+4. Name vergeben → DNS-Domains → **Konfigurationsdatei hochladen**
+5. **Nicht** aktivieren: „Gesamten IPv4-Netzwerkverkehr über VPN“ (das wäre Full-Tunnel vom Heimnetz!)
+6. Verbindung speichern
+
+**AVM-Einschränkung:** Wenn bereits WireGuard-Verbindungen auf der Fritzbox
+existieren (z. B. für Smartphone-Fernzugriff), müssen diese **vorher gelöscht**
+werden, bevor die Fritzbox als VPN-**Client** zu einem externen Anbieter eingerichtet
+werden kann.
 
 Am VPS (Produktiv, nach erfolgreichem Test):
 
