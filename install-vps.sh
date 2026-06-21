@@ -82,6 +82,9 @@ SPEEDTEST_USER="${WIREGUARD2HOME_SPEEDTEST_USER:-$BACKUP_REMOTE_USER}"
 SPEEDTEST_HOST="${WIREGUARD2HOME_SPEEDTEST_HOST:-10.100.0.2}"
 SPEEDTEST_SSH_KEY="${WIREGUARD2HOME_SPEEDTEST_SSH_KEY:-$BACKUP_SSH_KEY}"
 SPEEDTEST_SIZE_MB="${WIREGUARD2HOME_SPEEDTEST_SIZE_MB:-64}"
+SPEEDTEST_IPERF_PARALLEL="${WIREGUARD2HOME_SPEEDTEST_IPERF_PARALLEL:-4}"
+SPEEDTEST_IPERF_DURATION="${WIREGUARD2HOME_SPEEDTEST_IPERF_DURATION:-20}"
+SPEEDTEST_VPS_HOST="${WIREGUARD2HOME_SPEEDTEST_VPS_HOST:-10.100.0.1}"
 ENABLE_UFW_FAIL2BAN=0
 ENABLE_DOCKER=0
 ENABLE_MONITORING=0
@@ -124,6 +127,9 @@ Optionen:
   --speedtest-host HOST        Zielhost fuer den Tunnel-Speedtest
   --speedtest-ssh-key PFAD     SSH-Key fuer den Tunnel-Speedtest
   --speedtest-size-mb N        Datenmenge pro Speedtest-Richtung
+  --speedtest-parallel N       Parallele iperf3-Streams fuer den Tunneltest (Standard: 4)
+  --speedtest-duration N       Dauer des Tunneltests in Sekunden (Standard: 20)
+  --speedtest-vps-host IP      VPS-Adresse im Tunnel fuer Gateway->VPS-Test (Standard: 10.100.0.1)
   --masquerade-interface IFACE Ausgehendes Internet-Interface fuer NAT (Default: automatisch)
   --no-masquerade              NAT/Masquerade deaktivieren (Standard: aktiv, fuer Full-Tunnel noetig)
   --with-ufw-fail2ban          Installiert zusaetzlich ufw und fail2ban (Host)
@@ -278,6 +284,18 @@ parse_args() {
         ;;
       --speedtest-size-mb)
         SPEEDTEST_SIZE_MB="$2"
+        shift 2
+        ;;
+      --speedtest-parallel)
+        SPEEDTEST_IPERF_PARALLEL="$2"
+        shift 2
+        ;;
+      --speedtest-duration)
+        SPEEDTEST_IPERF_DURATION="$2"
+        shift 2
+        ;;
+      --speedtest-vps-host)
+        SPEEDTEST_VPS_HOST="$2"
         shift 2
         ;;
       --masquerade-interface)
@@ -673,6 +691,9 @@ WIREGUARD2HOME_SPEEDTEST_USER=$(printf '%q' "$SPEEDTEST_USER")
 WIREGUARD2HOME_SPEEDTEST_HOST=$(printf '%q' "$SPEEDTEST_HOST")
 WIREGUARD2HOME_SPEEDTEST_SSH_KEY=$(printf '%q' "$SPEEDTEST_SSH_KEY")
 WIREGUARD2HOME_SPEEDTEST_SIZE_MB=$(printf '%q' "$SPEEDTEST_SIZE_MB")
+WIREGUARD2HOME_SPEEDTEST_IPERF_PARALLEL=$(printf '%q' "$SPEEDTEST_IPERF_PARALLEL")
+WIREGUARD2HOME_SPEEDTEST_IPERF_DURATION=$(printf '%q' "$SPEEDTEST_IPERF_DURATION")
+WIREGUARD2HOME_SPEEDTEST_VPS_HOST=$(printf '%q' "$SPEEDTEST_VPS_HOST")
 EOF
   chmod 600 "$CONFIG_FILE"
 }

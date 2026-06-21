@@ -322,8 +322,15 @@ Tasten: `v`/`tab` zum Umschalten, `r` neu laden, `q` zum Beenden.
 
 ## Speedtests
 
-* **Tunnel Speedtest** — misst den Durchsatz über den WireGuard-Tunnel mit `iperf3`
+* **Tunnel Speedtest** — misst den Durchsatz über den WireGuard-Tunnel mit `iperf3` (4 parallele Streams, 20 s)
 * **VPS Aussen-Speedtest** — misst einen HTTP-Download als Richtwert für die VPS-Anbindung
+
+Konfigurierbar in `/etc/wireguard2home.conf`:
+
+```bash
+WIREGUARD2HOME_SPEEDTEST_IPERF_PARALLEL=4
+WIREGUARD2HOME_SPEEDTEST_IPERF_DURATION=20
+```
 
 ---
 

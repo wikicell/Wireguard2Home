@@ -416,6 +416,20 @@ update_server_peer_in_conf() {
   local tmp_conf
   tmp_conf="$(mktemp)"
 
+  # Stale VPS-Peers entfernen: gleiche AllowedIPs, aber anderer PublicKey.
+  awk -v cidr="$WG_NETWORK_CIDR" -v key="$SERVER_PUBLIC_KEY" '
+    BEGIN { RS=""; FS="\n" }
+    {
+      if ($0 ~ /\[Peer\]/) {
+        is_vps_peer = ($0 ~ ("AllowedIPs = " cidr) || $0 ~ ("AllowedIPs=" cidr))
+        has_key = ($0 ~ key)
+        if (is_vps_peer && !has_key) next
+      }
+      printf "%s%s", (printed++ ? "\n\n" : ""), $0
+    }
+    END { if (printed) print "" }
+  ' "$WG_CONF" > "$tmp_conf"
+
   # Nur den [Peer]-Block mit dem bekannten VPS-PublicKey entfernen.
   # Andere Peers (z. B. manuell hinzugefuegte Road-Warrior) bleiben erhalten.
   awk -v key="$SERVER_PUBLIC_KEY" '
@@ -425,7 +439,8 @@ update_server_peer_in_conf() {
       printf "%s%s", (printed++ ? "\n\n" : ""), $0
     }
     END { if (printed) print "" }
-  ' "$WG_CONF" > "$tmp_conf"
+  ' "$tmp_conf" > "${tmp_conf}.2"
+  mv "${tmp_conf}.2" "$tmp_conf"
 
   # Frischen VPS-Peer anhaengen
   {

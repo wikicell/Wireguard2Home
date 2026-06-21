@@ -6,7 +6,7 @@ are replaced; the bootstrap's own logic (HEADER/MIDDLE) is left untouched.
 import os
 import sys
 
-REPO = "/Users/marcellbelles/CODING/SwiftUI/Gate2homeTunnel"
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BOOT = os.path.join(REPO, "install-wireguard2home.sh")
 
 # delimiter -> source filename (order irrelevant for in-place replace)

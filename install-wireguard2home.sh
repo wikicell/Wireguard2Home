@@ -470,6 +470,9 @@ SPEEDTEST_USER="${WIREGUARD2HOME_SPEEDTEST_USER:-$BACKUP_REMOTE_USER}"
 SPEEDTEST_HOST="${WIREGUARD2HOME_SPEEDTEST_HOST:-10.100.0.2}"
 SPEEDTEST_SSH_KEY="${WIREGUARD2HOME_SPEEDTEST_SSH_KEY:-$BACKUP_SSH_KEY}"
 SPEEDTEST_SIZE_MB="${WIREGUARD2HOME_SPEEDTEST_SIZE_MB:-64}"
+SPEEDTEST_IPERF_PARALLEL="${WIREGUARD2HOME_SPEEDTEST_IPERF_PARALLEL:-4}"
+SPEEDTEST_IPERF_DURATION="${WIREGUARD2HOME_SPEEDTEST_IPERF_DURATION:-20}"
+SPEEDTEST_VPS_HOST="${WIREGUARD2HOME_SPEEDTEST_VPS_HOST:-10.100.0.1}"
 ENABLE_UFW_FAIL2BAN=0
 ENABLE_DOCKER=0
 ENABLE_MONITORING=0
@@ -512,6 +515,9 @@ Optionen:
   --speedtest-host HOST        Zielhost fuer den Tunnel-Speedtest
   --speedtest-ssh-key PFAD     SSH-Key fuer den Tunnel-Speedtest
   --speedtest-size-mb N        Datenmenge pro Speedtest-Richtung
+  --speedtest-parallel N       Parallele iperf3-Streams fuer den Tunneltest (Standard: 4)
+  --speedtest-duration N       Dauer des Tunneltests in Sekunden (Standard: 20)
+  --speedtest-vps-host IP      VPS-Adresse im Tunnel fuer Gateway->VPS-Test (Standard: 10.100.0.1)
   --masquerade-interface IFACE Ausgehendes Internet-Interface fuer NAT (Default: automatisch)
   --no-masquerade              NAT/Masquerade deaktivieren (Standard: aktiv, fuer Full-Tunnel noetig)
   --with-ufw-fail2ban          Installiert zusaetzlich ufw und fail2ban (Host)
@@ -666,6 +672,18 @@ parse_args() {
         ;;
       --speedtest-size-mb)
         SPEEDTEST_SIZE_MB="$2"
+        shift 2
+        ;;
+      --speedtest-parallel)
+        SPEEDTEST_IPERF_PARALLEL="$2"
+        shift 2
+        ;;
+      --speedtest-duration)
+        SPEEDTEST_IPERF_DURATION="$2"
+        shift 2
+        ;;
+      --speedtest-vps-host)
+        SPEEDTEST_VPS_HOST="$2"
         shift 2
         ;;
       --masquerade-interface)
@@ -1061,6 +1079,9 @@ WIREGUARD2HOME_SPEEDTEST_USER=$(printf '%q' "$SPEEDTEST_USER")
 WIREGUARD2HOME_SPEEDTEST_HOST=$(printf '%q' "$SPEEDTEST_HOST")
 WIREGUARD2HOME_SPEEDTEST_SSH_KEY=$(printf '%q' "$SPEEDTEST_SSH_KEY")
 WIREGUARD2HOME_SPEEDTEST_SIZE_MB=$(printf '%q' "$SPEEDTEST_SIZE_MB")
+WIREGUARD2HOME_SPEEDTEST_IPERF_PARALLEL=$(printf '%q' "$SPEEDTEST_IPERF_PARALLEL")
+WIREGUARD2HOME_SPEEDTEST_IPERF_DURATION=$(printf '%q' "$SPEEDTEST_IPERF_DURATION")
+WIREGUARD2HOME_SPEEDTEST_VPS_HOST=$(printf '%q' "$SPEEDTEST_VPS_HOST")
 EOF
   chmod 600 "$CONFIG_FILE"
 }
@@ -1904,6 +1925,20 @@ update_server_peer_in_conf() {
   local tmp_conf
   tmp_conf="$(mktemp)"
 
+  # Stale VPS-Peers entfernen: gleiche AllowedIPs, aber anderer PublicKey.
+  awk -v cidr="$WG_NETWORK_CIDR" -v key="$SERVER_PUBLIC_KEY" '
+    BEGIN { RS=""; FS="\n" }
+    {
+      if ($0 ~ /\[Peer\]/) {
+        is_vps_peer = ($0 ~ ("AllowedIPs = " cidr) || $0 ~ ("AllowedIPs=" cidr))
+        has_key = ($0 ~ key)
+        if (is_vps_peer && !has_key) next
+      }
+      printf "%s%s", (printed++ ? "\n\n" : ""), $0
+    }
+    END { if (printed) print "" }
+  ' "$WG_CONF" > "$tmp_conf"
+
   # Nur den [Peer]-Block mit dem bekannten VPS-PublicKey entfernen.
   # Andere Peers (z. B. manuell hinzugefuegte Road-Warrior) bleiben erhalten.
   awk -v key="$SERVER_PUBLIC_KEY" '
@@ -1913,7 +1948,8 @@ update_server_peer_in_conf() {
       printf "%s%s", (printed++ ? "\n\n" : ""), $0
     }
     END { if (printed) print "" }
-  ' "$WG_CONF" > "$tmp_conf"
+  ' "$tmp_conf" > "${tmp_conf}.2"
+  mv "${tmp_conf}.2" "$tmp_conf"
 
   # Frischen VPS-Peer anhaengen
   {
@@ -2138,6 +2174,9 @@ SPEEDTEST_USER="${WIREGUARD2HOME_SPEEDTEST_USER:-$BACKUP_REMOTE_USER}"
 SPEEDTEST_HOST="${WIREGUARD2HOME_SPEEDTEST_HOST:-10.100.0.2}"
 SPEEDTEST_SSH_KEY="${WIREGUARD2HOME_SPEEDTEST_SSH_KEY:-${BACKUP_SSH_HOME}/.ssh/gate2home_backup}"
 SPEEDTEST_SIZE_MB="${WIREGUARD2HOME_SPEEDTEST_SIZE_MB:-64}"
+SPEEDTEST_IPERF_PARALLEL="${WIREGUARD2HOME_SPEEDTEST_IPERF_PARALLEL:-4}"
+SPEEDTEST_IPERF_DURATION="${WIREGUARD2HOME_SPEEDTEST_IPERF_DURATION:-20}"
+SPEEDTEST_VPS_HOST="${WIREGUARD2HOME_SPEEDTEST_VPS_HOST:-10.100.0.1}"
 
 if [ -n "${WIREGUARD2HOME_STATE_DIR:-}" ]; then
   STATE_DIR="$WIREGUARD2HOME_STATE_DIR"
@@ -2817,29 +2856,45 @@ wireguard_get_client_files_ordered() {
   done | sort | cut -f2-
 }
 
-speedtest_start_remote_iperf_server() {
-  ssh -i "$SPEEDTEST_SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "${SPEEDTEST_USER}@${SPEEDTEST_HOST}" \
-    "nohup iperf3 -s -1 >/tmp/wireguard2home-iperf3.log 2>&1 &"
+speedtest_parse_iperf_mbit() {
+  awk '
+    /\[SUM\].*receiver/ { rate = $(NF-2); unit = $(NF-1); found = 1 }
+    !found && /receiver$/ && $0 !~ /\[SUM\]/ { rate = $(NF-2); unit = $(NF-1) }
+    END { if (rate != "") printf "%s %s", rate, unit }
+  '
 }
 
-speedtest_measure_direction() {
-  DIRECTION="$1"
-  CLIENT_ARGS=()
-
-  if [ "$DIRECTION" = "download" ]; then
-    CLIENT_ARGS+=("-R")
-  fi
-
-  speedtest_start_remote_iperf_server
+speedtest_start_remote_iperf_server() {
+  ssh -i "$SPEEDTEST_SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "${SPEEDTEST_USER}@${SPEEDTEST_HOST}" \
+    "pkill -x iperf3 2>/dev/null; sleep 0.5; nohup iperf3 -s -1 >/tmp/wireguard2home-iperf3.log 2>&1 &"
   sleep 1
+}
 
-  IPERF_OUTPUT="$(iperf3 -c "$SPEEDTEST_HOST" -t 10 -f m "${CLIENT_ARGS[@]}")"
-  SPEEDTEST_RATE="$(printf '%s\n' "$IPERF_OUTPUT" | awk '/receiver$/ {rate=$(NF-2); unit=$(NF-1)} END {if (rate != "") printf "%s %s", rate, unit}')"
+speedtest_start_local_iperf_server() {
+  pkill -x iperf3 2>/dev/null || true
+  sleep 0.5
+  nohup iperf3 -s -1 >/tmp/wireguard2home-iperf3.log 2>&1 &
+  sleep 1
+}
 
+speedtest_measure_vps_to_gateway() {
+  speedtest_start_remote_iperf_server
+  IPERF_OUTPUT="$(iperf3 -c "$SPEEDTEST_HOST" -t "$SPEEDTEST_IPERF_DURATION" -P "$SPEEDTEST_IPERF_PARALLEL" -f m 2>&1)" || return 1
+  SPEEDTEST_RATE="$(printf '%s\n' "$IPERF_OUTPUT" | speedtest_parse_iperf_mbit)"
   if [ -z "$SPEEDTEST_RATE" ]; then
     return 1
   fi
+  printf '%s\n' "$SPEEDTEST_RATE"
+}
 
+speedtest_measure_gateway_to_vps() {
+  speedtest_start_local_iperf_server
+  IPERF_OUTPUT="$(ssh -i "$SPEEDTEST_SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "${SPEEDTEST_USER}@${SPEEDTEST_HOST}" \
+    "iperf3 -c ${SPEEDTEST_VPS_HOST} -t ${SPEEDTEST_IPERF_DURATION} -P ${SPEEDTEST_IPERF_PARALLEL} -f m" 2>&1)" || return 1
+  SPEEDTEST_RATE="$(printf '%s\n' "$IPERF_OUTPUT" | speedtest_parse_iperf_mbit)"
+  if [ -z "$SPEEDTEST_RATE" ]; then
+    return 1
+  fi
   printf '%s\n' "$SPEEDTEST_RATE"
 }
 
@@ -2859,8 +2914,8 @@ run_tunnel_speedtest() {
   echo "=============================="
   echo ""
   echo "Ziel:   ${SPEEDTEST_USER}@${SPEEDTEST_HOST}"
-  echo "Methode: iperf3 ueber den WireGuard-Tunnel"
-  echo "Hinweis: SSH dient nur zum Starten des Remote-iperf3-Servers."
+  echo "Methode: iperf3 ueber den WireGuard-Tunnel (${SPEEDTEST_IPERF_PARALLEL} Streams, ${SPEEDTEST_IPERF_DURATION}s)"
+  echo "Hinweis: SSH dient nur zum Starten des Remote-iperf3-Servers bzw. Client auf dem Gateway."
   echo ""
 
   SSH_PROBE_OUTPUT="$(ssh -i "$SPEEDTEST_SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "${SPEEDTEST_USER}@${SPEEDTEST_HOST}" "command -v iperf3 >/dev/null 2>&1 && echo IPERF_OK || echo IPERF_MISSING" 2>&1)"
@@ -2885,14 +2940,14 @@ run_tunnel_speedtest() {
   fi
 
   echo "Teste VPS -> Gateway-Host ueber den Tunnel..."
-  if ! UPLOAD_RESULT="$(speedtest_measure_direction upload)"; then
-    echo "Fehler: Upload-Test mit iperf3 konnte nicht ausgewertet werden."
+  if ! UPLOAD_RESULT="$(speedtest_measure_vps_to_gateway)"; then
+    echo "Fehler: VPS->Gateway-Test mit iperf3 konnte nicht ausgewertet werden."
     return
   fi
 
   echo "Teste Gateway-Host -> VPS ueber den Tunnel..."
-  if ! DOWNLOAD_RESULT="$(speedtest_measure_direction download)"; then
-    echo "Fehler: Download-Test mit iperf3 konnte nicht ausgewertet werden."
+  if ! DOWNLOAD_RESULT="$(speedtest_measure_gateway_to_vps)"; then
+    echo "Fehler: Gateway->VPS-Test mit iperf3 konnte nicht ausgewertet werden."
     return
   fi
 
