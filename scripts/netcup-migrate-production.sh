@@ -3,11 +3,13 @@
 set -euo pipefail
 
 BACKUP_FILE="${1:-}"
-NETCUP_ENDPOINT="${NETCUP_ENDPOINT:-188.68.38.18:51820}"
-OLD_ENDPOINT="${OLD_ENDPOINT:-31.70.75.7:51820}"
+NETCUP_ENDPOINT="${NETCUP_ENDPOINT:-}"
+OLD_ENDPOINT="${OLD_ENDPOINT:-}"
 LAN_SUBNET="${LAN_SUBNET:-192.168.2.0/24}"
-FB_PUBKEY="${FB_PUBKEY:-REDACTED_FRITZBOX_PUBLIC_KEY=}"
-PI_PUBKEY="${PI_PUBKEY:-REDACTED_PI_PUBLIC_KEY=}"
+# Keys nur per Umgebung — nie Defaults mit echten Werten ins Git!
+FB_PUBKEY="${FB_PUBKEY:-}"
+PI_PUBKEY="${PI_PUBKEY:-}"
+FRITZBOX_PRIVATE_KEY="${FRITZBOX_PRIVATE_KEY:-}"
 WG_CONF="/etc/wireguard/wg0.conf"
 W2H_CONF="/etc/wireguard2home.conf"
 CLIENT_DIR="/root/wg-clients"
@@ -37,6 +39,10 @@ restore_from_backup() {
 }
 
 configure_fritzbox_gateway() {
+  if [ -z "$FB_PUBKEY" ]; then
+    echo "FB_PUBKEY fehlt (Fritzbox WireGuard Public Key)." >&2
+    exit 1
+  fi
   log "Passe wg0.conf fuer Fritzbox-Gateway an ..."
   local tmp
   tmp="$(mktemp)"
@@ -124,11 +130,14 @@ update_client_endpoints() {
 
 write_fritzbox_production_conf() {
   local server_pub fb_priv out="/root/fritzbox-netcup-production.conf"
-  # Nach Restore: Key aus wg0.conf, nicht aus altem server_public.key
   server_pub="$(awk -F' = ' '/^PrivateKey =/ {print $2; exit}' "$WG_CONF" | wg pubkey 2>/dev/null || wg show wg0 public-key 2>/dev/null)"
-  fb_priv="$(awk -F' = ' '/^PrivateKey =/ {print $2; exit}' /root/fritzbox-netcup-import-lan24.conf 2>/dev/null || true)"
+  fb_priv="$FRITZBOX_PRIVATE_KEY"
+  [ -z "$fb_priv" ] && fb_priv="$(awk -F' = ' '/^PrivateKey =/ {print $2; exit}' /root/fritzbox-netcup-import-lan24.conf 2>/dev/null || true)"
   [ -z "$fb_priv" ] && fb_priv="$(awk -F' = ' '/^PrivateKey =/ {print $2; exit}' /root/fritzbox-netcup-import.conf 2>/dev/null || true)"
-  [ -z "$fb_priv" ] && fb_priv='REDACTED_FRITZBOX_PRIVATE_KEY='
+  if [ -z "$fb_priv" ]; then
+    log "Fritzbox PrivateKey fehlt. Setze FRITZBOX_PRIVATE_KEY oder lege Import-Config auf dem VPS ab."
+    return 0
+  fi
   cat > "$out" <<EOF
 [Interface]
 PrivateKey = ${fb_priv}

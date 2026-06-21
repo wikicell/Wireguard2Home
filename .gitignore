@@ -2,3 +2,8 @@
 *.swp
 *.swo
 fritzbox-*.conf
+*.private.key
+server_private.key
+server_public.key
+wg-clients/
+**/wg0.conf
